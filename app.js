@@ -397,17 +397,16 @@ $('exportReportBtn').addEventListener('click',()=>alert('報表匯出功能：�
 function renderAvailable(){
   $('availableCount').textContent=availableData.length+' 間';
   $('availableGrid').innerHTML=availableData.length ? availableData.map(r=>{
-    const roomId = r['房號'] || r.room_id || '未命名';
+    let roomId = r['房號'] || r.room_id || '';
     const building = r['館別'] || '';
     const rent = r['月租'] || r.rent || 0;
     
-    // 生成精美預設資訊
-    const type = r.type || (roomId.includes('A') || roomId.includes('B') || roomId.match(/\d+/) ? '套房' : '雅房');
-    const size = r.size || (type === '套房' ? '6坪' : '5坪');
-    const floor = r.floor || (roomId.match(/(\d)\d\d/) ? roomId.match(/(\d)\d\d/)[1] + 'F' : '1F');
-    const features = r.features || ['獨立衛浴', '冷氣', '床組', '衣櫃'];
+    // 解決 Google Sheets API 自動將 A8 等混合字串過濾為 null 的問題
+    if (!roomId) {
+      roomId = '<span style="color:var(--danger-600);font-size:0.8rem;font-weight:normal">⚠️ 試算表欄位請設為純文字</span>';
+    }
 
-    return '<div class="available-card"><div class="available-card-room">🔑 ' + (building ? building + ' ' : '') + roomId + '</div><div class="available-card-info">房型：'+type+'<br>坪數：'+size+'<br>樓層：'+floor+'<br>設備：'+features.join('、')+'</div><div class="available-card-price">月租 '+fmt(rent)+'</div></div>';
+    return '<div class="available-card"><div class="available-card-room">🔑 ' + (building ? building + ' ' : '') + roomId + '</div><div class="available-card-price">月租 ' + fmt(rent) + '</div></div>';
   }).join('') : '<div class="empty-state">🎉 目前無待出租空房！</div>';
 }
 
