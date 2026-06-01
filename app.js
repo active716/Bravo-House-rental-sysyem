@@ -395,6 +395,25 @@ $('exportReportBtn').addEventListener('click',()=>alert('報表匯出功能：�
 
 // === 9. 可承租房間 (AVAILABLE) ===
 function renderAvailable(){
+  const layout = localStorage.getItem('available_layout') || 'list'; // 預設使用 'list' 大橫條
+  
+  const grid = $('availableGrid');
+  if (grid) {
+    grid.className = 'available-grid layout-' + layout;
+  }
+  
+  const btnGrid = $('btnLayoutGrid');
+  const btnList = $('btnLayoutList');
+  if (btnGrid && btnList) {
+    if (layout === 'grid') {
+      btnGrid.classList.add('btn-layout-active');
+      btnList.classList.remove('btn-layout-active');
+    } else {
+      btnList.classList.add('btn-layout-active');
+      btnGrid.classList.remove('btn-layout-active');
+    }
+  }
+
   $('availableCount').textContent=availableData.length+' 間';
   $('availableGrid').innerHTML=availableData.length ? availableData.map(r=>{
     let roomId = r['房號'] || r.room_id || '';
@@ -723,4 +742,19 @@ function initCRUD(){
     el.onclick = function(e){ if(e.target===this) closeAllModals(); };
   });
 }
+
+// ── 監聽可承租房間版面切換 ──────────────────────────────
+document.addEventListener('click', function(e) {
+  const gridBtn = e.target.closest('#btnLayoutGrid');
+  const listBtn = e.target.closest('#btnLayoutList');
+  if (gridBtn) {
+    localStorage.setItem('available_layout', 'grid');
+    renderAvailable();
+  }
+  if (listBtn) {
+    localStorage.setItem('available_layout', 'list');
+    renderAvailable();
+  }
+});
+
 

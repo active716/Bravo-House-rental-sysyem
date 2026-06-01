@@ -1,19 +1,25 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>租賃管理系統 — 管理後台</title>
   <meta name="description" content="租賃自動化管理系統 — 空房管理、報修追蹤、帳單查詢、合約管理一站搞定">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
   <!-- ===== 密碼鎖頁 ===== -->
-  <div id="lockScreen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,#0f172a,#1e293b);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px">
-    <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:40px 32px;width:100%;max-width:380px;text-align:center">
+  <div id="lockScreen"
+    style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,#0f172a,#1e293b);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px">
+    <div
+      style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:40px 32px;width:100%;max-width:380px;text-align:center">
       <div style="font-size:2.5rem;margin-bottom:8px">🏠</div>
       <h2 style="color:#fff;font-size:1.3rem;font-weight:700;margin-bottom:4px">租賃管理系統</h2>
       <p style="color:#94a3b8;font-size:.82rem;margin-bottom:28px">請輸入管理密碼以進入後台</p>
@@ -38,7 +44,7 @@
         document.getElementById('mainApp').style.display = 'none';
       }
     }
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
       checkAuth();
       var btn = document.getElementById('pwSubmit');
       var inp = document.getElementById('pwInput');
@@ -53,545 +59,557 @@
         }
       }
       btn.addEventListener('click', tryLogin);
-      inp.addEventListener('keydown', function(e){ if(e.key==='Enter') tryLogin(); });
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') tryLogin(); });
     });
   </script>
 
   <!-- ===== 主應用區塊（登入後才顯示） ===== -->
   <div id="mainApp">
 
-  <!-- ===== 側邊欄 ===== -->
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-brand">
-      <div class="brand-icon">🏠</div>
-      <div class="brand-text">
-        <span class="brand-title">租賃管理系統</span>
-        <span class="brand-subtitle">Rental Management</span>
-      </div>
-    </div>
-    <nav class="sidebar-nav">
-      <div class="nav-section-title">管理總覽</div>
-      <a href="#" class="nav-item active" data-page="dashboard" id="nav-dashboard">
-        <span class="nav-icon">📊</span>
-        <span class="nav-label">儀表板</span>
-      </a>
-      <a href="#" class="nav-item" data-page="rooms" id="nav-rooms">
-        <span class="nav-icon">🏢</span>
-        <span class="nav-label">房間管理</span>
-        <span class="nav-badge" id="navVacantBadge">5</span>
-      </a>
-
-      <div class="nav-section-title">營運管理</div>
-      <a href="#" class="nav-item" data-page="tenants" id="nav-tenants">
-        <span class="nav-icon">👥</span>
-        <span class="nav-label">房客管理</span>
-      </a>
-      <a href="#" class="nav-item" data-page="billing" id="nav-billing">
-        <span class="nav-icon">💰</span>
-        <span class="nav-label">帳單管理</span>
-        <span class="nav-badge warn" id="navUnpaidBadge">3</span>
-      </a>
-      <a href="#" class="nav-item" data-page="meter" id="nav-meter">
-        <span class="nav-icon">⚡</span>
-        <span class="nav-label">水電紀錄</span>
-      </a>
-
-      <div class="nav-section-title">服務與合約</div>
-      <a href="#" class="nav-item" data-page="repairs" id="nav-repairs">
-        <span class="nav-icon">🔧</span>
-        <span class="nav-label">報修管理</span>
-        <span class="nav-badge danger" id="navRepairBadge">4</span>
-      </a>
-      <a href="#" class="nav-item" data-page="contracts" id="nav-contracts">
-        <span class="nav-icon">📋</span>
-        <span class="nav-label">合約管理</span>
-        <span class="nav-badge warn" id="navContractBadge">6</span>
-      </a>
-
-      <div class="nav-section-title">報表</div>
-      <a href="#" class="nav-item" data-page="reports" id="nav-reports">
-        <span class="nav-icon">📈</span>
-        <span class="nav-label">月報表統計</span>
-      </a>
-      <a href="#" class="nav-item" data-page="available" id="nav-available">
-        <span class="nav-icon">🔑</span>
-        <span class="nav-label">可承租房間</span>
-      </a>
-    </nav>
-    <div class="sidebar-footer">
-      <div class="user-info">
-        <div class="user-avatar">管</div>
-        <div class="user-detail">
-          <span class="user-name">管理員</span>
-          <span class="user-role">屋主 / 系統管理者</span>
+    <!-- ===== 側邊欄 ===== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">🏠</div>
+        <div class="brand-text">
+          <span class="brand-title">租賃管理系統</span>
+          <span class="brand-subtitle">Rental Management</span>
         </div>
       </div>
-      <button id="logoutBtn" style="margin-top:10px;width:100%;padding:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#94a3b8;font-size:.75rem;cursor:pointer">🔒 鎖定登出</button>
-    </div>
-  </aside>
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">管理總覽</div>
+        <a href="#" class="nav-item active" data-page="dashboard" id="nav-dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">儀表板</span>
+        </a>
+        <a href="#" class="nav-item" data-page="rooms" id="nav-rooms">
+          <span class="nav-icon">🏢</span>
+          <span class="nav-label">房間管理</span>
+          <span class="nav-badge" id="navVacantBadge">5</span>
+        </a>
 
-  <!-- ===== 手機版遮罩 ===== -->
-  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+        <div class="nav-section-title">營運管理</div>
+        <a href="#" class="nav-item" data-page="tenants" id="nav-tenants">
+          <span class="nav-icon">👥</span>
+          <span class="nav-label">房客管理</span>
+        </a>
+        <a href="#" class="nav-item" data-page="billing" id="nav-billing">
+          <span class="nav-icon">💰</span>
+          <span class="nav-label">帳單管理</span>
+          <span class="nav-badge warn" id="navUnpaidBadge">3</span>
+        </a>
+        <a href="#" class="nav-item" data-page="meter" id="nav-meter">
+          <span class="nav-icon">⚡</span>
+          <span class="nav-label">水電紀錄</span>
+        </a>
 
-  <!-- ===== 主內容區 ===== -->
-  <main class="main-content">
-    <!-- 頂部工具列 -->
-    <header class="topbar">
-      <button class="menu-toggle" id="menuToggle" aria-label="展開選單">☰</button>
-      <div class="topbar-title">
-        <h1 id="pageTitle">儀表板</h1>
-        <span class="topbar-date" id="currentDate"></span>
-      </div>
-      <div class="topbar-actions">
-        <span id="connStatus" class="conn-status">🟡 模擬資料模式</span>
-        <select id="monthSelector" class="month-select">
-          <option value="2026-07">2026 年 7 月</option>
-          <option value="2026-06">2026 年 6 月</option>
-          <option value="2026-05" selected>2026 年 5 月</option>
-        </select>
-        <button class="btn btn-primary" id="syncBtn">
-          <span>🔄</span> 同步資料
-        </button>
-      </div>
-    </header>
+        <div class="nav-section-title">服務與合約</div>
+        <a href="#" class="nav-item" data-page="repairs" id="nav-repairs">
+          <span class="nav-icon">🔧</span>
+          <span class="nav-label">報修管理</span>
+          <span class="nav-badge danger" id="navRepairBadge">4</span>
+        </a>
+        <a href="#" class="nav-item" data-page="contracts" id="nav-contracts">
+          <span class="nav-icon">📋</span>
+          <span class="nav-label">合約管理</span>
+          <span class="nav-badge warn" id="navContractBadge">6</span>
+        </a>
 
-    <!-- ===== 頁面：儀表板 ===== -->
-    <section class="page active" id="page-dashboard">
-      <div class="kpi-grid">
-        <div class="kpi-card kpi-total">
-          <div class="kpi-icon">🏢</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiTotalRooms">0</span>
-            <span class="kpi-label">總房間數</span>
+        <div class="nav-section-title">報表</div>
+        <a href="#" class="nav-item" data-page="reports" id="nav-reports">
+          <span class="nav-icon">📈</span>
+          <span class="nav-label">月報表統計</span>
+        </a>
+        <a href="#" class="nav-item" data-page="available" id="nav-available">
+          <span class="nav-icon">🔑</span>
+          <span class="nav-label">可承租房間</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <div class="user-avatar">管</div>
+          <div class="user-detail">
+            <span class="user-name">管理員</span>
+            <span class="user-role">屋主 / 系統管理者</span>
           </div>
         </div>
-        <div class="kpi-card kpi-occupied">
-          <div class="kpi-icon">👤</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiOccupied">0</span>
-            <span class="kpi-label">已出租</span>
-          </div>
-          <div class="kpi-trend up" id="kpiOccRate"></div>
-        </div>
-        <div class="kpi-card kpi-vacant">
-          <div class="kpi-icon">🔑</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiVacant">0</span>
-            <span class="kpi-label">空房待租</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-revenue">
-          <div class="kpi-icon">💵</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiRevenue">$0</span>
-            <span class="kpi-label">本月應收</span>
-          </div>
-        </div>
+        <button id="logoutBtn"
+          style="margin-top:10px;width:100%;padding:7px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#94a3b8;font-size:.75rem;cursor:pointer">🔒
+          鎖定登出</button>
       </div>
+    </aside>
 
-      <!-- 警示區 -->
-      <div class="alert-strip" id="alertStrip">
-        <!-- JS 動態產生 -->
-      </div>
+    <!-- ===== 手機版遮罩 ===== -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
-      <!-- 雙欄佈局 -->
-      <div class="dashboard-grid">
+    <!-- ===== 主內容區 ===== -->
+    <main class="main-content">
+      <!-- 頂部工具列 -->
+      <header class="topbar">
+        <button class="menu-toggle" id="menuToggle" aria-label="展開選單">☰</button>
+        <div class="topbar-title">
+          <h1 id="pageTitle">儀表板</h1>
+          <span class="topbar-date" id="currentDate"></span>
+        </div>
+        <div class="topbar-actions">
+          <span id="connStatus" class="conn-status">🟡 模擬資料模式</span>
+          <select id="monthSelector" class="month-select">
+            <option value="2026-07">2026 年 7 月</option>
+            <option value="2026-06">2026 年 6 月</option>
+            <option value="2026-05" selected>2026 年 5 月</option>
+          </select>
+          <button class="btn btn-primary" id="syncBtn">
+            <span>🔄</span> 同步資料
+          </button>
+        </div>
+      </header>
+
+      <!-- ===== 頁面：儀表板 ===== -->
+      <section class="page active" id="page-dashboard">
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-total">
+            <div class="kpi-icon">🏢</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiTotalRooms">0</span>
+              <span class="kpi-label">總房間數</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-occupied">
+            <div class="kpi-icon">👤</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiOccupied">0</span>
+              <span class="kpi-label">已出租</span>
+            </div>
+            <div class="kpi-trend up" id="kpiOccRate"></div>
+          </div>
+          <div class="kpi-card kpi-vacant">
+            <div class="kpi-icon">🔑</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiVacant">0</span>
+              <span class="kpi-label">空房待租</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon">💵</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiRevenue">$0</span>
+              <span class="kpi-label">本月應收</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 警示區 -->
+        <div class="alert-strip" id="alertStrip">
+          <!-- JS 動態產生 -->
+        </div>
+
+        <!-- 雙欄佈局 -->
+        <div class="dashboard-grid">
+          <div class="card">
+            <div class="card-header">
+              <h3>📍 各館別出租率</h3>
+            </div>
+            <div class="card-body">
+              <div class="building-list" id="buildingList"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>📋 最近動態</h3>
+            </div>
+            <div class="card-body">
+              <div class="activity-list" id="activityList"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 快捷看板：未繳租 + 合約到期 + 待處理報修 -->
+        <div class="dashboard-grid tri-grid">
+          <div class="card">
+            <div class="card-header">
+              <h3>💸 未繳租名單</h3>
+              <span class="badge badge-danger" id="unpaidDashCount">0</span>
+            </div>
+            <div class="card-body">
+              <div class="quick-list" id="unpaidQuickList"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>⏰ 合約即將到期</h3>
+              <span class="badge badge-warn" id="expiringDashCount">0</span>
+            </div>
+            <div class="card-body">
+              <div class="quick-list" id="expiringQuickList"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>🔧 待處理報修</h3>
+              <span class="badge badge-info" id="repairDashCount">0</span>
+            </div>
+            <div class="card-body">
+              <div class="quick-list" id="repairQuickList"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 頁面：房間管理 ===== -->
+      <section class="page" id="page-rooms">
+        <div class="page-toolbar">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="roomSearch" placeholder="搜尋房號...">
+          </div>
+          <div class="filter-group">
+            <select id="roomBuildingFilter" class="filter-select">
+              <option value="all">全部館別</option>
+            </select>
+            <select id="roomStatusFilter" class="filter-select">
+              <option value="all">全部狀態</option>
+              <option value="occupied">已出租</option>
+              <option value="vacant">空房</option>
+            </select>
+          </div>
+          <div class="view-toggle">
+            <button class="view-btn active" data-view="grid" id="viewGrid">▦</button>
+            <button class="view-btn" data-view="list" id="viewList">☰</button>
+          </div>
+        </div>
+
+        <!-- 視覺化房間格子 -->
+        <div class="room-grid-container" id="roomGridContainer"></div>
+
+        <!-- 列表模式 -->
+        <div class="card" id="roomListContainer" style="display:none;">
+          <div class="card-body">
+            <div class="table-wrapper">
+              <table class="data-table" id="roomTable">
+                <thead>
+                  <tr>
+                    <th>房號</th>
+                    <th>館別</th>
+                    <th>出租狀態</th>
+                    <th>房客姓名</th>
+                    <th>租金</th>
+                    <th>LINE 綁定</th>
+                    <th>合約到期</th>
+                  </tr>
+                </thead>
+                <tbody id="roomTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 頁面：房客管理 ===== -->
+      <section class="page" id="page-tenants">
+        <div class="page-toolbar">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="tenantSearch" placeholder="搜尋房號、姓名...">
+          </div>
+          <div class="filter-group">
+            <select id="tenantBuildingFilter" class="filter-select">
+              <option value="all">全部館別</option>
+            </select>
+            <select id="tenantStatusFilter" class="filter-select">
+              <option value="all">全部狀態</option>
+              <option value="bound">已綁定 LINE</option>
+              <option value="unbound">未綁定 LINE</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="addTenantBtn">➕ 新增房客</button>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>房號</th>
+                    <th>姓名</th>
+                    <th>電話</th>
+                    <th>人數</th>
+                    <th>租金</th>
+                    <th>LINE 綁定</th>
+                    <th>合約到期</th>
+                    <th>狀態</th>
+                  </tr>
+                </thead>
+                <tbody id="tenantTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 頁面：帳單管理 ===== -->
+      <section class="page" id="page-billing">
+        <div class="kpi-grid kpi-grid-4">
+          <div class="kpi-card kpi-total">
+            <div class="kpi-icon">📄</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiBillCount">0</span>
+              <span class="kpi-label">帳單數</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-occupied">
+            <div class="kpi-icon">✅</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiBillSent">0</span>
+              <span class="kpi-label">已發送</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-vacant">
+            <div class="kpi-icon">❌</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiBillUnpaid">0</span>
+              <span class="kpi-label">未繳租</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon">💰</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiBillTotal">$0</span>
+              <span class="kpi-label">應收總額</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 未繳租名單區 -->
+        <div class="card card-highlight-danger" id="unpaidSection">
+          <div class="card-header">
+            <h3>🚨 本月未繳租名單</h3>
+            <span class="badge badge-danger" id="unpaidBillCount">0</span>
+          </div>
+          <div class="card-body">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>房號</th>
+                    <th>姓名</th>
+                    <th>應繳金額</th>
+                    <th>截止日</th>
+                    <th>逾期天數</th>
+                    <th>狀態</th>
+                  </tr>
+                </thead>
+                <tbody id="unpaidTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 全部帳單 -->
         <div class="card">
           <div class="card-header">
-            <h3>📍 各館別出租率</h3>
+            <h3>📋 全部帳單明細</h3>
           </div>
           <div class="card-body">
-            <div class="building-list" id="buildingList"></div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>房號</th>
+                    <th>姓名</th>
+                    <th>租金</th>
+                    <th>電費</th>
+                    <th>水費</th>
+                    <th>滯納金</th>
+                    <th>總計</th>
+                    <th>截止日</th>
+                    <th>繳費狀態</th>
+                  </tr>
+                </thead>
+                <tbody id="billingTbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
+      </section>
+
+      <!-- ===== 頁面：水電紀錄 ===== -->
+      <section class="page" id="page-meter">
         <div class="card">
           <div class="card-header">
-            <h3>📋 最近動態</h3>
+            <h3>⚡ 本月電表讀數</h3>
+            <button class="btn btn-primary" id="addMeterBtn">➕ 新增電表</button>
           </div>
           <div class="card-body">
-            <div class="activity-list" id="activityList"></div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>房號</th>
+                    <th>姓名</th>
+                    <th>上期度數</th>
+                    <th>本期度數</th>
+                    <th>使用度數</th>
+                    <th>電費</th>
+                    <th>用電量</th>
+                  </tr>
+                </thead>
+                <tbody id="meterTbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- 快捷看板：未繳租 + 合約到期 + 待處理報修 -->
-      <div class="dashboard-grid tri-grid">
+      <!-- ===== 頁面：報修管理 ===== -->
+      <section class="page" id="page-repairs">
+        <div class="kpi-grid kpi-grid-4">
+          <div class="kpi-card kpi-total">
+            <div class="kpi-icon">📨</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiRepairTotal">0</span>
+              <span class="kpi-label">總報修數</span>
+            </div>
+          </div>
+          <div class="kpi-card" style="--accent: #ef4444;">
+            <div class="kpi-icon">🔴</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiRepairPending">0</span>
+              <span class="kpi-label">待處理</span>
+            </div>
+          </div>
+          <div class="kpi-card" style="--accent: #f59e0b;">
+            <div class="kpi-icon">🟡</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiRepairProgress">0</span>
+              <span class="kpi-label">處理中</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-occupied">
+            <div class="kpi-icon">✅</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiRepairDone">0</span>
+              <span class="kpi-label">已完成</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-toolbar">
+          <div class="filter-group">
+            <select id="repairStatusFilter" class="filter-select">
+              <option value="all">全部狀態</option>
+              <option value="pending">待處理</option>
+              <option value="in_progress">處理中</option>
+              <option value="done">已完成</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="repair-cards" id="repairCards"></div>
+      </section>
+
+      <!-- ===== 頁面：合約管理 ===== -->
+      <section class="page" id="page-contracts">
+        <div class="kpi-grid kpi-grid-3">
+          <div class="kpi-card kpi-total">
+            <div class="kpi-icon">📋</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiContractTotal">0</span>
+              <span class="kpi-label">合約總數</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon">⚠️</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiContractExpiring">0</span>
+              <span class="kpi-label">30 天內到期</span>
+            </div>
+          </div>
+          <div class="kpi-card" style="--accent: #ef4444;">
+            <div class="kpi-icon">🔴</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiContractExpired">0</span>
+              <span class="kpi-label">已過期</span>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-header">
-            <h3>💸 未繳租名單</h3>
-            <span class="badge badge-danger" id="unpaidDashCount">0</span>
+            <h3>📋 合約清單</h3>
           </div>
           <div class="card-body">
-            <div class="quick-list" id="unpaidQuickList"></div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>房號</th>
+                    <th>房客姓名</th>
+                    <th>電話</th>
+                    <th>到期日</th>
+                    <th>剩餘天數</th>
+                    <th>合約狀態</th>
+                    <th>動作</th>
+                  </tr>
+                </thead>
+                <tbody id="contractTbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
+      </section>
+
+      <!-- ===== 頁面：月報表統計 ===== -->
+      <section class="page" id="page-reports">
         <div class="card">
           <div class="card-header">
-            <h3>⏰ 合約即將到期</h3>
-            <span class="badge badge-warn" id="expiringDashCount">0</span>
+            <h3>📈 月度營收報表</h3>
+            <button class="btn btn-ghost" id="exportReportBtn">📤 匯出報表</button>
           </div>
           <div class="card-body">
-            <div class="quick-list" id="expiringQuickList"></div>
+            <div class="report-summary" id="reportSummary"></div>
+            <div class="chart-container" id="revenueChart"></div>
           </div>
         </div>
+
+        <div class="dashboard-grid">
+          <div class="card">
+            <div class="card-header">
+              <h3>🏢 各館營收分佈</h3>
+            </div>
+            <div class="card-body">
+              <div class="building-revenue-list" id="buildingRevenueList"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>📊 本月統計摘要</h3>
+            </div>
+            <div class="card-body">
+              <div class="stat-list" id="statList"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 頁面：可承租房間 ===== -->
+      <section class="page" id="page-available">
         <div class="card">
-          <div class="card-header">
-            <h3>🔧 待處理報修</h3>
-            <span class="badge badge-info" id="repairDashCount">0</span>
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <h3>🔑 目前可承租房間</h3>
+              <span class="badge badge-success" id="availableCount">0 間</span>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost btn-sm" id="btnLayoutGrid" style="padding:5px 10px;border-radius:6px;font-size:0.78rem">網格大方磚 🔲</button>
+              <button class="btn btn-ghost btn-sm" id="btnLayoutList" style="padding:5px 10px;border-radius:6px;font-size:0.78rem">一目暸然大橫條 ➖</button>
+            </div>
           </div>
           <div class="card-body">
-            <div class="quick-list" id="repairQuickList"></div>
+            <p class="help-text">以下資料來源為獨立的 Google Sheet，同步後即時更新可供出租的房間清單。</p>
+            <div class="available-grid" id="availableGrid"></div>
           </div>
         </div>
-      </div>
-    </section>
-
-    <!-- ===== 頁面：房間管理 ===== -->
-    <section class="page" id="page-rooms">
-      <div class="page-toolbar">
-        <div class="search-box">
-          <span class="search-icon">🔍</span>
-          <input type="text" id="roomSearch" placeholder="搜尋房號...">
-        </div>
-        <div class="filter-group">
-          <select id="roomBuildingFilter" class="filter-select">
-            <option value="all">全部館別</option>
-          </select>
-          <select id="roomStatusFilter" class="filter-select">
-            <option value="all">全部狀態</option>
-            <option value="occupied">已出租</option>
-            <option value="vacant">空房</option>
-          </select>
-        </div>
-        <div class="view-toggle">
-          <button class="view-btn active" data-view="grid" id="viewGrid">▦</button>
-          <button class="view-btn" data-view="list" id="viewList">☰</button>
-        </div>
-      </div>
-
-      <!-- 視覺化房間格子 -->
-      <div class="room-grid-container" id="roomGridContainer"></div>
-
-      <!-- 列表模式 -->
-      <div class="card" id="roomListContainer" style="display:none;">
-        <div class="card-body">
-          <div class="table-wrapper">
-            <table class="data-table" id="roomTable">
-              <thead>
-                <tr>
-                  <th>房號</th>
-                  <th>館別</th>
-                  <th>出租狀態</th>
-                  <th>房客姓名</th>
-                  <th>租金</th>
-                  <th>LINE 綁定</th>
-                  <th>合約到期</th>
-                </tr>
-              </thead>
-              <tbody id="roomTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 頁面：房客管理 ===== -->
-    <section class="page" id="page-tenants">
-      <div class="page-toolbar">
-        <div class="search-box">
-          <span class="search-icon">🔍</span>
-          <input type="text" id="tenantSearch" placeholder="搜尋房號、姓名...">
-        </div>
-        <div class="filter-group">
-          <select id="tenantBuildingFilter" class="filter-select">
-            <option value="all">全部館別</option>
-          </select>
-          <select id="tenantStatusFilter" class="filter-select">
-            <option value="all">全部狀態</option>
-            <option value="bound">已綁定 LINE</option>
-            <option value="unbound">未綁定 LINE</option>
-          </select>
-        </div>
-        <button class="btn btn-primary" id="addTenantBtn">➕ 新增房客</button>
-      </div>
-      <div class="card">
-        <div class="card-body">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>房號</th>
-                  <th>姓名</th>
-                  <th>電話</th>
-                  <th>人數</th>
-                  <th>租金</th>
-                  <th>LINE 綁定</th>
-                  <th>合約到期</th>
-                  <th>狀態</th>
-                </tr>
-              </thead>
-              <tbody id="tenantTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 頁面：帳單管理 ===== -->
-    <section class="page" id="page-billing">
-      <div class="kpi-grid kpi-grid-4">
-        <div class="kpi-card kpi-total">
-          <div class="kpi-icon">📄</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiBillCount">0</span>
-            <span class="kpi-label">帳單數</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-occupied">
-          <div class="kpi-icon">✅</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiBillSent">0</span>
-            <span class="kpi-label">已發送</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-vacant">
-          <div class="kpi-icon">❌</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiBillUnpaid">0</span>
-            <span class="kpi-label">未繳租</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-revenue">
-          <div class="kpi-icon">💰</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiBillTotal">$0</span>
-            <span class="kpi-label">應收總額</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 未繳租名單區 -->
-      <div class="card card-highlight-danger" id="unpaidSection">
-        <div class="card-header">
-          <h3>🚨 本月未繳租名單</h3>
-          <span class="badge badge-danger" id="unpaidBillCount">0</span>
-        </div>
-        <div class="card-body">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>房號</th>
-                  <th>姓名</th>
-                  <th>應繳金額</th>
-                  <th>截止日</th>
-                  <th>逾期天數</th>
-                  <th>狀態</th>
-                </tr>
-              </thead>
-              <tbody id="unpaidTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- 全部帳單 -->
-      <div class="card">
-        <div class="card-header">
-          <h3>📋 全部帳單明細</h3>
-        </div>
-        <div class="card-body">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>房號</th>
-                  <th>姓名</th>
-                  <th>租金</th>
-                  <th>電費</th>
-                  <th>水費</th>
-                  <th>滯納金</th>
-                  <th>總計</th>
-                  <th>截止日</th>
-                  <th>繳費狀態</th>
-                </tr>
-              </thead>
-              <tbody id="billingTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 頁面：水電紀錄 ===== -->
-    <section class="page" id="page-meter">
-      <div class="card">
-        <div class="card-header">
-          <h3>⚡ 本月電表讀數</h3>
-          <button class="btn btn-primary" id="addMeterBtn">➕ 新增電表</button>
-        </div>
-        <div class="card-body">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>房號</th>
-                  <th>姓名</th>
-                  <th>上期度數</th>
-                  <th>本期度數</th>
-                  <th>使用度數</th>
-                  <th>電費</th>
-                  <th>用電量</th>
-                </tr>
-              </thead>
-              <tbody id="meterTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 頁面：報修管理 ===== -->
-    <section class="page" id="page-repairs">
-      <div class="kpi-grid kpi-grid-4">
-        <div class="kpi-card kpi-total">
-          <div class="kpi-icon">📨</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiRepairTotal">0</span>
-            <span class="kpi-label">總報修數</span>
-          </div>
-        </div>
-        <div class="kpi-card" style="--accent: #ef4444;">
-          <div class="kpi-icon">🔴</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiRepairPending">0</span>
-            <span class="kpi-label">待處理</span>
-          </div>
-        </div>
-        <div class="kpi-card" style="--accent: #f59e0b;">
-          <div class="kpi-icon">🟡</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiRepairProgress">0</span>
-            <span class="kpi-label">處理中</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-occupied">
-          <div class="kpi-icon">✅</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiRepairDone">0</span>
-            <span class="kpi-label">已完成</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="page-toolbar">
-        <div class="filter-group">
-          <select id="repairStatusFilter" class="filter-select">
-            <option value="all">全部狀態</option>
-            <option value="pending">待處理</option>
-            <option value="in_progress">處理中</option>
-            <option value="done">已完成</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="repair-cards" id="repairCards"></div>
-    </section>
-
-    <!-- ===== 頁面：合約管理 ===== -->
-    <section class="page" id="page-contracts">
-      <div class="kpi-grid kpi-grid-3">
-        <div class="kpi-card kpi-total">
-          <div class="kpi-icon">📋</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiContractTotal">0</span>
-            <span class="kpi-label">合約總數</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-revenue">
-          <div class="kpi-icon">⚠️</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiContractExpiring">0</span>
-            <span class="kpi-label">30 天內到期</span>
-          </div>
-        </div>
-        <div class="kpi-card" style="--accent: #ef4444;">
-          <div class="kpi-icon">🔴</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="kpiContractExpired">0</span>
-            <span class="kpi-label">已過期</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3>📋 合約清單</h3>
-        </div>
-        <div class="card-body">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>房號</th>
-                  <th>房客姓名</th>
-                  <th>電話</th>
-                  <th>到期日</th>
-                  <th>剩餘天數</th>
-                  <th>合約狀態</th>
-                  <th>動作</th>
-                </tr>
-              </thead>
-              <tbody id="contractTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 頁面：月報表統計 ===== -->
-    <section class="page" id="page-reports">
-      <div class="card">
-        <div class="card-header">
-          <h3>📈 月度營收報表</h3>
-          <button class="btn btn-ghost" id="exportReportBtn">📤 匯出報表</button>
-        </div>
-        <div class="card-body">
-          <div class="report-summary" id="reportSummary"></div>
-          <div class="chart-container" id="revenueChart"></div>
-        </div>
-      </div>
-
-      <div class="dashboard-grid">
-        <div class="card">
-          <div class="card-header"><h3>🏢 各館營收分佈</h3></div>
-          <div class="card-body">
-            <div class="building-revenue-list" id="buildingRevenueList"></div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-header"><h3>📊 本月統計摘要</h3></div>
-          <div class="card-body">
-            <div class="stat-list" id="statList"></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 頁面：可承租房間 ===== -->
-    <section class="page" id="page-available">
-      <div class="card">
-        <div class="card-header">
-          <h3>🔑 目前可承租房間</h3>
-          <span class="badge badge-success" id="availableCount">0 間</span>
-        </div>
-        <div class="card-body">
-          <p class="help-text">以下資料來源為獨立的 Google Sheet，同步後即時更新可供出租的房間清單。</p>
-          <div class="available-grid" id="availableGrid"></div>
-        </div>
-      </div>
-    </section>
-  </main>
+      </section>
+    </main>
 
   </div><!-- /mainApp -->
 
@@ -691,4 +709,5 @@
   </div>
 
 </body>
+
 </html>

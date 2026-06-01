@@ -17,7 +17,8 @@
 }
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html{font-size:15px;scroll-behavior:smooth}
-body{font-family:var(--font-sans);background:var(--gray-100);color:var(--gray-800);display:flex;min-height:100vh;overflow-x:hidden}
+body{font-family:var(--font-sans);background:var(--gray-100);color:var(--gray-800);min-height:100vh;overflow-x:hidden}
+#mainApp{display:flex;width:100%;min-height:100vh}
 
 /* Sidebar */
 .sidebar{width:var(--sidebar-width);background:linear-gradient(180deg,var(--gray-900),#162032);color:#fff;display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;z-index:100;transition:transform .35s var(--ease-out);overflow-y:auto}
@@ -227,12 +228,108 @@ body{font-family:var(--font-sans);background:var(--gray-100);color:var(--gray-80
 
 /* Available Rooms */
 .help-text{font-size:.82rem;color:var(--gray-500);margin-bottom:16px}
-.available-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
-.available-card{border:1px solid var(--success-100);background:var(--success-50);border-radius:var(--radius);padding:18px;transition:all .2s}
-.available-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
-.available-card-room{font-size:1rem;font-weight:800;color:var(--gray-900);margin-bottom:6px}
-.available-card-info{font-size:.8rem;color:var(--gray-600);line-height:1.6}
-.available-card-price{font-size:1.1rem;font-weight:800;color:var(--success-600);margin-top:8px}
+
+/* 按鈕高亮樣式 */
+.btn-layout-active {
+  background: var(--success-600) !important;
+  color: #fff !important;
+  border-color: var(--success-600) !important;
+  box-shadow: 0 2px 6px rgba(22,163,74,.2);
+}
+
+/* 樣式 1：大方磚網格 (layout-grid) */
+.available-grid.layout-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+.available-grid.layout-grid .available-card {
+  border: 2px solid var(--success-200);
+  background: #fff;
+  border-radius: 14px;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+  transition: all .25s ease;
+  min-height: 150px;
+}
+.available-grid.layout-grid .available-card:hover {
+  border-color: var(--success-500);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-4px);
+  background: var(--success-50);
+}
+.available-grid.layout-grid .available-card-room {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--gray-900);
+}
+.available-grid.layout-grid .available-card-price {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--success-600);
+  background: var(--success-100);
+  padding: 6px 20px;
+  border-radius: 10px;
+  width: 100%;
+}
+
+/* 樣式 2：一目暸然大橫條 (layout-list) */
+.available-grid.layout-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.available-grid.layout-list .available-card {
+  border: 2px solid var(--success-200);
+  background: #fff;
+  border-radius: 14px;
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: var(--shadow-sm);
+  transition: all .25s ease;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.available-grid.layout-list .available-card:hover {
+  border-color: var(--success-500);
+  box-shadow: var(--shadow-md);
+  transform: translateX(4px);
+  background: var(--success-50);
+}
+.available-grid.layout-list .available-card-room {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--gray-900);
+}
+.available-grid.layout-list .available-card-price {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--success-600);
+  background: var(--success-100);
+  padding: 6px 20px;
+  border-radius: 10px;
+  min-width: 120px;
+  text-align: center;
+}
+
+@media(max-width:480px) {
+  .available-grid.layout-list .available-card {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+  .available-grid.layout-list .available-card-price {
+    width: 100%;
+  }
+}
 
 /* Responsive */
 @media(max-width:1024px){.kpi-grid,.kpi-grid-4{grid-template-columns:repeat(2,1fr)}.dashboard-grid,.tri-grid{grid-template-columns:1fr}.report-summary{grid-template-columns:repeat(2,1fr)}}
