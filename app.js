@@ -5,7 +5,7 @@ const TODAY=new Date();
 // ══════════════════════════════════════════
 //  ★ 請將你的 GAS Web App 網址貼在這裡 ★
 // ══════════════════════════════════════════
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec';
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwDzpxuTFkUdQxzBEgdIzETqenKlDcKpN_AjKjG2IIRkls7BHZGNEF78lbbro-dJ2Pv/exec';
 // ══════════════════════════════════════════
 const HAS_GAS_WEB_APP = !GAS_WEB_APP_URL.includes('YOUR_SCRIPT_ID');
 const GAS_REPAIR_TABLE_ONLY = true;
