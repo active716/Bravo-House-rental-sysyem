@@ -8,14 +8,43 @@ const TODAY=new Date();
 const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec';
 // ══════════════════════════════════════════
 const HAS_GAS_WEB_APP = !GAS_WEB_APP_URL.includes('YOUR_SCRIPT_ID');
+const GAS_REPAIR_TABLE_ONLY = true;
 const LOCAL_STATE_KEY = 'rental_demo_state_v2';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function fetchGasJSONP(action='getAll', params={}){
+  if(!HAS_GAS_WEB_APP) return Promise.resolve({ ok:false, local:true });
+  return new Promise((resolve, reject)=>{
+    const callbackName = 'gas_repair_cb_' + Date.now() + '_' + Math.floor(Math.random()*10000);
+    const query = new URLSearchParams({ action, callback: callbackName, ...params });
+    const script = document.createElement('script');
+    const cleanup = () => {
+      delete window[callbackName];
+      if(script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timer);
+    };
+    const timer = setTimeout(()=>{
+      cleanup();
+      reject(new Error('雲端維修資料讀取逾時'));
+    }, 12000);
+    window[callbackName] = data => {
+      cleanup();
+      resolve(data || {});
+    };
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('雲端維修資料讀取失敗'));
+    };
+    script.src = GAS_WEB_APP_URL + '?' + query.toString();
+    document.head.appendChild(script);
+  });
+}
 
 // ── 統一 API 呼叫函式 ───────────────────────
 // GET:  apiRequest('GET')  → 呼叫 ?action=getAll
 // POST: apiRequest('POST', {action,table,payload})
 async function apiRequest(method='GET', body=null){
-  if(!HAS_GAS_WEB_APP){
+  if(!HAS_GAS_WEB_APP || (GAS_REPAIR_TABLE_ONLY && method !== 'GET' && body?.table && body.table !== 'tasks')){
     await sleep(120);
     return { ok:true, local:true, body };
   }
@@ -27,7 +56,7 @@ async function apiRequest(method='GET', body=null){
     } else {
       res=await fetch(GAS_WEB_APP_URL,{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
         body:JSON.stringify(body),
         redirect:'follow'
       });
@@ -35,6 +64,18 @@ async function apiRequest(method='GET', body=null){
     if(!res.ok) throw new Error('HTTP '+res.status);
     return await res.json();
   } catch(err){
+    if(method !== 'GET' && HAS_GAS_WEB_APP){
+      try{
+        await fetch(GAS_WEB_APP_URL,{
+          method:'POST',
+          mode:'no-cors',
+          body:JSON.stringify(body)
+        });
+        return { ok:true, noCors:true, body };
+      } catch(noCorsErr) {
+        console.warn('apiRequest no-cors fallback error:', noCorsErr);
+      }
+    }
     console.warn('apiRequest error:',err);
     throw err;
   } finally{
@@ -369,6 +410,7 @@ function markLocalRepairStatus(id, status){
   if(item){
     item.status = status;
     item.updated_at = new Date().toISOString().slice(0,10);
+    item.completed_at = status === 'done' ? item.updated_at : '';
   }
   saveLocalState();
 }
@@ -378,6 +420,54 @@ const isRepairOpen = item => !isRepairDone(item);
 const repairStatusKey = item => isRepairDone(item) ? 'done' : 'pending';
 const repairStatusText = item => isRepairDone(item) ? '完成' : '未完成';
 const repairDate = item => item?.date || item?.created_at || item?.updated_at || '';
+
+function normalizeRepairRecord(row){
+  const id = String(row?.id || row?.task_id || '').trim();
+  const status = String(row?.status || '').toLowerCase() === 'done' || String(row?.status || '') === '完成' ? 'done' : 'pending';
+  return {
+    ...row,
+    id,
+    task_id: row?.task_id || id,
+    task_type: row?.task_type || 'repair',
+    room_id: row?.room_id || row?.['房號'] || '',
+    category: row?.category || row?.title || row?.['問題類型'] || '維修問題',
+    desc: row?.desc || row?.note || row?.['故障敘述'] || '',
+    reporter: row?.reporter || row?.['登錄人'] || '客服人員',
+    status,
+    date: row?.date || row?.created_at || row?.['建立時間'] || '',
+    created_at: row?.created_at || row?.date || '',
+    updated_at: row?.updated_at || '',
+    completed_at: row?.completed_at || '',
+    onsite_notice: true
+  };
+}
+
+function applyCloudRepairs(rows){
+  repairsData = (rows || [])
+    .map(normalizeRepairRecord)
+    .filter(r=>r.id && r.task_type === 'repair');
+  saveLocalState();
+}
+
+async function loadCloudRepairs(options={}){
+  if(!HAS_GAS_WEB_APP) return false;
+  try{
+    if(!options.silent) showLoading();
+    const data = await fetchGasJSONP('getRepairs');
+    const rows = data.repairs || (data.tasks || []).filter(t=>String(t.task_type || '').toLowerCase() === 'repair');
+    applyCloudRepairs(rows);
+    showSheetStatus(true, 'GAS');
+    renderRepairs($('repairStatusFilter')?.value || 'all');
+    renderDashboard();
+    return true;
+  } catch(err) {
+    console.warn('loadCloudRepairs failed:', err);
+    if(!options.silent) showToast('雲端維修資料讀取失敗，暫用本機資料','error');
+    return false;
+  } finally {
+    if(!options.silent) hideLoading();
+  }
+}
 
 function addLocalRepair(payload){
   const today = new Date().toISOString().slice(0,10);
@@ -1020,6 +1110,7 @@ function loadData() {
           roomsData = data.rooms || [];
           availableData = data.available || [];
           logsData = data.logs || [];
+          repairsData = (data.repairs || (data.tasks || []).filter(t=>String(t.task_type || '').toLowerCase()==='repair')).map(normalizeRepairRecord);
           configData = data.config || {};
           
           showSheetStatus(true, 'GAS');
@@ -1064,6 +1155,7 @@ function loadData() {
     ensureCompanyBillingDemoData();
     showSheetStatus(false);
     init();
+    if(HAS_GAS_WEB_APP) loadCloudRepairs({silent:true});
 
     // 若試算表 ID 已設定且非預設值，則嘗試背景載入真實資料
     if(SPREADSHEET_ID && SPREADSHEET_ID !== 'YOUR_SPREADSHEET_ID') {
@@ -1092,6 +1184,7 @@ function loadData() {
         ensureCompanyBillingDemoData();
         showSheetStatus(true,'JSONP');
         init(); // 更新畫面
+        if(HAS_GAS_WEB_APP) loadCloudRepairs({silent:true});
       }).catch(err => {
         console.warn('JSONP 載入失敗，繼續使用 Mock 資料', err);
       });
@@ -1269,7 +1362,10 @@ function initCRUD(){
       reporter: $('rf_reporter').value.trim() || '客服人員',
       status: 'pending',
       created_at: today,
-      updated_at: today
+      updated_at: today,
+      completed_at: '',
+      onsite_notice: true,
+      source: 'github_pages'
     };
     if(!payload.room_id || !payload.category || !payload.desc){
       showToast('請選擇房號、問題類型並輸入故障敘述','error');
@@ -1283,6 +1379,7 @@ function initCRUD(){
       showToast('維修紀錄已新增，已通知現場人員 ✅');
       renderRepairs($('repairStatusFilter').value);
       renderDashboard();
+      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 900);
     } catch(err){ showToast('新增失敗：'+err.message,'error'); }
   };
 
@@ -1293,11 +1390,13 @@ function initCRUD(){
     const id = btn.dataset.id;
     const status = btn.dataset.status;
     try{
-      await apiRequest('POST',{action:'upsert',table:'tasks',payload:{task_id:id, status, updated_at:new Date().toISOString().slice(0,10)}});
+      const today = new Date().toISOString().slice(0,10);
+      await apiRequest('POST',{action:'upsert',table:'tasks',payload:{task_id:id, status, updated_at:today, completed_at:status==='done'?today:''}});
       markLocalRepairStatus(id, status);
       showToast('報修狀態已更新 ✅');
       renderRepairs($('repairStatusFilter').value);
       renderDashboard();
+      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 900);
     } catch(err){ showToast('操作失敗：'+err.message,'error'); }
   });
 
