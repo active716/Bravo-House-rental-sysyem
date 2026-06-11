@@ -40,6 +40,17 @@ function fetchGasJSONP(action='getAll', params={}){
   });
 }
 
+function sendGasBeacon(body){
+  if(!HAS_GAS_WEB_APP || typeof navigator === 'undefined' || !navigator.sendBeacon || typeof Blob === 'undefined') return false;
+  try{
+    const blob = new Blob([JSON.stringify(body)], { type:'text/plain;charset=utf-8' });
+    return navigator.sendBeacon(GAS_WEB_APP_URL, blob);
+  } catch(err) {
+    console.warn('sendGasBeacon failed:', err);
+    return false;
+  }
+}
+
 // ── 統一 API 呼叫函式 ───────────────────────
 // GET:  apiRequest('GET')  → 呼叫 ?action=getAll
 // POST: apiRequest('POST', {action,table,payload})
@@ -47,6 +58,9 @@ async function apiRequest(method='GET', body=null){
   if(!HAS_GAS_WEB_APP || (GAS_REPAIR_TABLE_ONLY && method !== 'GET' && body?.table && body.table !== 'tasks')){
     await sleep(120);
     return { ok:true, local:true, body };
+  }
+  if(method !== 'GET' && body?.table === 'tasks' && sendGasBeacon(body)){
+    return { ok:true, beacon:true, body };
   }
   try{
     showLoading();
@@ -1379,7 +1393,7 @@ function initCRUD(){
       showToast('維修紀錄已新增，已通知現場人員 ✅');
       renderRepairs($('repairStatusFilter').value);
       renderDashboard();
-      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 900);
+      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 1800);
     } catch(err){ showToast('新增失敗：'+err.message,'error'); }
   };
 
@@ -1396,7 +1410,7 @@ function initCRUD(){
       showToast('報修狀態已更新 ✅');
       renderRepairs($('repairStatusFilter').value);
       renderDashboard();
-      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 900);
+      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 1800);
     } catch(err){ showToast('操作失敗：'+err.message,'error'); }
   });
 
