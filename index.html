@@ -10,7 +10,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=601">
+  <link rel="stylesheet" href="style.css?v=603">
 </head>
 
 <body>
@@ -269,6 +269,7 @@
               <option value="all">全部狀態</option>
               <option value="occupied">已出租</option>
               <option value="vacant">空房</option>
+              <option value="cleaning">整理中</option>
             </select>
           </div>
           <div class="view-toggle">
@@ -294,6 +295,7 @@
                     <th>租金</th>
                     <th>LINE 綁定</th>
                     <th>合約到期</th>
+                    <th>詳細</th>
                   </tr>
                 </thead>
                 <tbody id="roomTbody"></tbody>
@@ -389,12 +391,12 @@
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>房號</th>
-                    <th>姓名</th>
+                    <th>帳單對象</th>
+                    <th>收件人</th>
+                    <th>房數</th>
                     <th>應繳金額</th>
                     <th>截止日</th>
                     <th>逾期天數</th>
-                    <th>狀態</th>
                   </tr>
                 </thead>
                 <tbody id="unpaidTbody"></tbody>
@@ -413,14 +415,14 @@
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>房號</th>
-                    <th>姓名</th>
-                    <th>租金</th>
-                    <th>電費</th>
-                    <th>水費</th>
+                    <th>帳單對象</th>
+                    <th>收件人</th>
+                    <th>房間明細</th>
+                    <th>固定租金</th>
+                    <th>電費合計</th>
+                    <th>水費合計</th>
                     <th>滯納金</th>
                     <th>總計</th>
-                    <th>截止日</th>
                     <th>繳費狀態</th>
                   </tr>
                 </thead>
@@ -473,14 +475,14 @@
             <div class="kpi-icon">🔴</div>
             <div class="kpi-info">
               <span class="kpi-value" id="kpiRepairPending">0</span>
-              <span class="kpi-label">待處理</span>
+              <span class="kpi-label">未完成</span>
             </div>
           </div>
           <div class="kpi-card" style="--accent: #f59e0b;">
-            <div class="kpi-icon">🟡</div>
+            <div class="kpi-icon">📣</div>
             <div class="kpi-info">
               <span class="kpi-value" id="kpiRepairProgress">0</span>
-              <span class="kpi-label">處理中</span>
+              <span class="kpi-label">現場通知</span>
             </div>
           </div>
           <div class="kpi-card kpi-occupied">
@@ -492,13 +494,64 @@
           </div>
         </div>
 
+        <div class="repair-workspace">
+          <div class="card repair-entry-card">
+            <div class="card-header">
+              <h3>新增維修紀錄</h3>
+              <span class="badge badge-info">客服登錄</span>
+            </div>
+            <form id="repairForm" class="repair-form">
+              <div class="repair-form-grid">
+                <div class="form-row">
+                  <label>房號 <span class="req">*</span></label>
+                  <select id="rf_room" required>
+                    <option value="">選擇房號</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>問題類型 <span class="req">*</span></label>
+                  <select id="rf_category" required>
+                    <option value="">選擇問題</option>
+                    <option value="水電問題">水電問題</option>
+                    <option value="冷氣問題">冷氣問題</option>
+                    <option value="衛浴設備">衛浴設備</option>
+                    <option value="門鎖鑰匙">門鎖鑰匙</option>
+                    <option value="家具設備">家具設備</option>
+                    <option value="網路訊號">網路訊號</option>
+                    <option value="其他問題">其他問題</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>登錄人</label>
+                  <input id="rf_reporter" type="text" placeholder="客服姓名或客服人員" value="客服人員">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>故障敘述 <span class="req">*</span></label>
+                <textarea id="rf_desc" rows="3" placeholder="請輸入現場需要知道的狀況，例如：浴室水龍頭漏水、冷氣開機後不冷、門鎖卡住。" required></textarea>
+              </div>
+              <div class="repair-form-actions">
+                <span class="repair-form-note">新增後會出現在現場人員通知清單，狀態預設為未完成。</span>
+                <button type="submit" class="btn btn-primary">新增並通知現場</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="card repair-notice-card">
+            <div class="card-header">
+              <h3>現場人員通知</h3>
+              <span class="badge badge-danger" id="repairNoticeCount">0 件</span>
+            </div>
+            <div class="onsite-notice-list" id="repairNoticeList"></div>
+          </div>
+        </div>
+
         <div class="page-toolbar">
           <div class="filter-group">
             <select id="repairStatusFilter" class="filter-select">
               <option value="all">全部狀態</option>
-              <option value="pending">待處理</option>
-              <option value="in_progress">處理中</option>
-              <option value="done">已完成</option>
+              <option value="open">未完成</option>
+              <option value="done">完成</option>
             </select>
           </div>
         </div>
@@ -614,7 +667,7 @@
   </div><!-- /mainApp -->
 
   <script src="data.js"></script>
-  <script src="app.js?v=601"></script>
+  <script src="app.js?v=603"></script>
 
   <!-- ===== Modal：新增房客 ===== -->
   <div class="modal-overlay" id="modalTenant" style="display:none">
@@ -705,6 +758,17 @@
           <button type="submit" class="btn btn-primary">儲存</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ===== Modal：房間 / 空房詳細資料 ===== -->
+  <div class="modal-overlay" id="modalDetail" style="display:none">
+    <div class="modal-box modal-box-wide">
+      <div class="modal-header">
+        <h3 id="detailModalTitle">房間詳細資料</h3>
+        <button class="modal-close">✕</button>
+      </div>
+      <div class="modal-detail-body" id="detailModalBody"></div>
     </div>
   </div>
 

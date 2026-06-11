@@ -10,6 +10,7 @@ const BUILDINGS = [
   { name: '光華館',  color: '#06b6d4', total: 20 },
   { name: '建楠館',  color: '#f59e0b', total: 22 },
   { name: '六合館',  color: '#10b981', total: 10 },
+  { name: '漢民館',  color: '#0f766e', total: 50 },
 ];
 
 // ── 房間資料 (rooms) ──────────────────────────────────────────
@@ -85,6 +86,38 @@ const MOCK_TENANTS = [
   { tenant_id:'T030', room_id:'六合館302',  name:'巫建輝', phone:'0943-345-678', rent:5200, people:1, status:'active', line_user_id:'Ur0', contract_start:'2026-04-01', contract_end:'2027-03-31', note:'' },
 ];
 
+// ── 公司戶合併帳單測試資料：漢民公司 50 間 ───────────────
+const HANMIN_ROOM_IDS = Array.from({ length: 50 }, (_, idx) => '漢民館' + String(idx + 1).padStart(3, '0'));
+
+MOCK_ROOMS.push(...HANMIN_ROOM_IDS.map((room_id, idx) => ({
+  room_id,
+  property_name: '漢民館',
+  rent: idx === 0 ? 50000 : 0,
+  status: 'occupied',
+  note: idx === 0 ? '漢民公司固定租金房' : '漢民公司水電明細房',
+  created_at: '2026-01-01',
+  updated_at: '2026-05-01'
+})));
+
+MOCK_TENANTS.push(...HANMIN_ROOM_IDS.map((room_id, idx) => ({
+  tenant_id: 'THM' + String(idx + 1).padStart(3, '0'),
+  room_id,
+  name: '漢民公司',
+  phone: '07-123-4567',
+  rent: idx === 0 ? 50000 : 0,
+  people: 1,
+  status: 'active',
+  line_user_id: idx === 0 ? 'Uhanmin' : '',
+  billing_account: '漢民公司',
+  billing_contact: '王小姐',
+  billing_contact_phone: '07-123-4567',
+  billing_line_user_id: 'Uhanmin',
+  rent_role: idx === 0 ? 'primary' : 'detail',
+  contract_start: '2026-01-01',
+  contract_end: '2026-12-31',
+  note: idx === 0 ? '固定租金收在這間' : '只併入水電明細'
+})));
+
 // ── 電表紀錄 (meters) ─────────────────────────────────────────
 const MOCK_METERS = (function() {
   return MOCK_TENANTS.map(t => {
@@ -131,6 +164,11 @@ const MOCK_INVOICES = (function() {
       invoice_id: 'INV2026-05-' + t.room_id,
       room_id: t.room_id,
       tenant_name: t.name,
+      billing_account: t.billing_account || t.name,
+      billing_contact: t.billing_contact || t.name,
+      billing_contact_phone: t.billing_contact_phone || t.phone || '',
+      billing_line_user_id: t.billing_line_user_id || t.line_user_id || '',
+      rent_role: t.rent_role || 'primary',
       billing_month: '2026-05',
       yyyymm: '2026-05',
       rent: t.rent,
@@ -148,7 +186,7 @@ const MOCK_INVOICES = (function() {
       late_fee: late,
       total: total,
       paid: paid,
-      sent: !!t.line_user_id,
+      sent: !!(t.billing_line_user_id || t.line_user_id),
       due_date: '2026/5/10',
     };
   });

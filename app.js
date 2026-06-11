@@ -7,11 +7,18 @@ const TODAY=new Date();
 // ══════════════════════════════════════════
 const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec';
 // ══════════════════════════════════════════
+const HAS_GAS_WEB_APP = !GAS_WEB_APP_URL.includes('YOUR_SCRIPT_ID');
+const LOCAL_STATE_KEY = 'rental_demo_state_v2';
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ── 統一 API 呼叫函式 ───────────────────────
 // GET:  apiRequest('GET')  → 呼叫 ?action=getAll
 // POST: apiRequest('POST', {action,table,payload})
 async function apiRequest(method='GET', body=null){
+  if(!HAS_GAS_WEB_APP){
+    await sleep(120);
+    return { ok:true, local:true, body };
+  }
   try{
     showLoading();
     let res;
@@ -68,6 +75,7 @@ const diffDays=(d)=>{
   return Math.ceil((t-TODAY)/(1000*60*60*24));
 };
 const fmt=n=>'$'+(Number(n) || 0).toLocaleString();
+const escapeHtml=val=>String(val ?? '').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const normalizeYyyymm=val=>{
   if (!val) return '';
   if (val instanceof Date) {
@@ -78,6 +86,79 @@ const normalizeYyyymm=val=>{
   if (m) return m[1] + '-' + m[2].padStart(2, '0');
   return str;
 };
+const truthy=val=>val===true||String(val).toLowerCase()==='true'||String(val)==='1'||String(val)==='已繳';
+const isPaid=i=>truthy(i.paid)||String(i.status||'').toLowerCase()==='paid'||String(i.status||'')==='已繳';
+const invoiceName=i=>i.name||i.tenant_name||'';
+const invoiceRent=i=>Number(i.rent ?? i.rent_amount ?? 0) || 0;
+const invoiceElectricity=i=>Number(i.electricity ?? i.electric_fee ?? 0) || 0;
+const invoiceWater=i=>Number(i.water ?? i.water_fee ?? 0) || 0;
+const invoiceLateFee=i=>Number(i.late_fee ?? i.other_fee ?? 0) || 0;
+const invoiceTotal=i=>Number(i.total ?? i.total_amount ?? 0) || 0;
+const rowValue=(row,keys)=>{
+  for(const key of keys){
+    const val=row?.[key];
+    if(val !== undefined && val !== null && String(val).trim() !== '') return String(val).trim();
+  }
+  return '';
+};
+const tenantMapByRoom=()=>{
+  const map = new Map();
+  tenantsData.filter(t=>t.status==='active').forEach(t=>{
+    const id = String(t.room_id || '').trim();
+    if(id && !map.has(id)) map.set(id, t);
+  });
+  return map;
+};
+const billingAccountName=(invoice, tenant=null)=>rowValue(invoice,['billing_account','帳單對象','合併帳單名稱','billing_group','account_name']) || rowValue(tenant,['billing_account','帳單對象','合併帳單名稱','billing_group','account_name']) || invoiceName(invoice) || rowValue(tenant,['name','tenant_name']) || '未命名帳單';
+const billingContactName=(invoice, tenant=null)=>rowValue(invoice,['billing_contact','收件人','帳務窗口','contact_name']) || rowValue(tenant,['billing_contact','收件人','帳務窗口','contact_name']) || billingAccountName(invoice, tenant);
+const billingGroupKey=(invoice, tenant=null)=>billingAccountName(invoice, tenant).replace(/\s+/g,'').toLowerCase();
+const invoiceSent=(invoice, tenant=null)=>truthy(invoice.sent) || !!rowValue(invoice,['billing_line_user_id','line_user_id']) || !!rowValue(tenant,['billing_line_user_id','line_user_id']);
+function buildBillingGroups(invoices){
+  const tenantMap = tenantMapByRoom();
+  const groups = new Map();
+  invoices.forEach(invoice=>{
+    const tenant = tenantMap.get(String(invoice.room_id || '').trim());
+    const key = billingGroupKey(invoice, tenant);
+    if(!groups.has(key)){
+      groups.set(key, {
+        key,
+        account: billingAccountName(invoice, tenant),
+        contact: billingContactName(invoice, tenant),
+        rooms: [],
+        rent: 0,
+        electricity: 0,
+        water: 0,
+        lateFee: 0,
+        total: 0,
+        sent: false,
+        allPaid: true,
+        dueDate: invoice.due_date || '',
+      });
+    }
+    const group = groups.get(key);
+    const room = {
+      room_id: invoice.room_id || '-',
+      rent: invoiceRent(invoice),
+      electricity: invoiceElectricity(invoice),
+      water: invoiceWater(invoice),
+      lateFee: invoiceLateFee(invoice),
+      total: invoiceTotal(invoice),
+      paid: isPaid(invoice)
+    };
+    group.rooms.push(room);
+    group.rent += room.rent;
+    group.electricity += room.electricity;
+    group.water += room.water;
+    group.lateFee += room.lateFee;
+    group.total += room.total;
+    group.sent = group.sent || invoiceSent(invoice, tenant);
+    group.allPaid = group.allPaid && room.paid;
+    if(!group.dueDate && invoice.due_date) group.dueDate = invoice.due_date;
+  });
+  return [...groups.values()].sort((a,b)=>a.account.localeCompare(b.account,'zh-Hant',{numeric:true}));
+}
+const roomKey=r=>String(r?.room_id || r?.['房號'] || '').trim();
+const roomBuildingName=(roomId, room=null)=>room?.property_name||room?.['館別']||extractBuilding(roomId);
 
 // ── 判斷執行環境 ────────────────────────────────────────
 const IS_GAS = typeof google !== 'undefined' && google.script && google.script.run;
@@ -87,10 +168,270 @@ let tenantsData = [];
 let invoicesData = [];
 let meterData = [];
 let availableData = [];
-let repairsData = MOCK_REPAIRS;
+let repairsData = [];
 let logsData = [];
 let configData = {};
 let roomsData = [];
+let crudInitialized = false;
+
+function saveLocalState(){
+  if(IS_GAS) return;
+  try{
+    localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify({
+      tenantsData, invoicesData, meterData, availableData, repairsData, roomsData, logsData
+    }));
+  } catch(err) {
+    console.warn('local state save failed', err);
+  }
+}
+
+function isManualRepairRecord(item){
+  const id = String(item?.id || item?.task_id || '');
+  return item?.onsite_notice === true || id.startsWith('MR');
+}
+
+function loadLocalState(){
+  if(IS_GAS) return false;
+  try{
+    const raw = localStorage.getItem(LOCAL_STATE_KEY);
+    if(!raw) return false;
+    const data = JSON.parse(raw);
+    let cleanedLegacyRepairs = false;
+    if(Array.isArray(data.tenantsData)) tenantsData = data.tenantsData;
+    if(Array.isArray(data.invoicesData)) invoicesData = data.invoicesData;
+    if(Array.isArray(data.meterData)) meterData = data.meterData;
+    if(Array.isArray(data.availableData)) availableData = data.availableData;
+    if(Array.isArray(data.repairsData)){
+      repairsData = data.repairsData.filter(isManualRepairRecord);
+      cleanedLegacyRepairs = repairsData.length !== data.repairsData.length;
+    }
+    if(Array.isArray(data.roomsData)) roomsData = data.roomsData;
+    if(Array.isArray(data.logsData)) logsData = data.logsData;
+    if(cleanedLegacyRepairs) saveLocalState();
+    return true;
+  } catch(err) {
+    console.warn('local state load failed', err);
+    return false;
+  }
+}
+
+function getRoomRecords(){
+  const tenantByRoom = new Map();
+  tenantsData.filter(t=>t.status==='active').forEach(t=>{
+    if(!tenantByRoom.has(t.room_id)) tenantByRoom.set(t.room_id, t);
+  });
+  const roomById = new Map();
+  (roomsData || []).forEach(r=>{
+    const id = roomKey(r);
+    if(id && !roomById.has(id)) roomById.set(id, r);
+  });
+  const ids = new Set([...roomById.keys(), ...tenantsData.map(t=>t.room_id).filter(Boolean)]);
+  return [...ids].sort((a,b)=>a.localeCompare(b,'zh-Hant',{numeric:true})).map(id=>{
+    const room = roomById.get(id) || {};
+    const tenant = tenantByRoom.get(id);
+    const baseStatus = room.status === 'cleaning' ? 'cleaning' : 'vacant';
+    return {
+      ...room,
+      ...(tenant || {}),
+      room_id: id,
+      property_name: roomBuildingName(id, room),
+      rent: Number((tenant && tenant.rent) || room.rent || 0),
+      status: tenant ? 'active' : baseStatus,
+      name: tenant ? tenant.name : '',
+      phone: tenant ? tenant.phone : '',
+      people: tenant ? tenant.people : '',
+      line_user_id: tenant ? tenant.line_user_id : '',
+      contract_start: tenant ? tenant.contract_start : '',
+      contract_end: tenant ? tenant.contract_end : '',
+      note: tenant ? tenant.note : (room.note || '')
+    };
+  });
+}
+
+function getRoomRecord(roomId){
+  return getRoomRecords().find(r=>r.room_id===roomId);
+}
+
+function ensureInvoiceForTenant(tenant){
+  const yyyymm = $('monthSelector')?.value || normalizeYyyymm(new Date());
+  const idx = invoicesData.findIndex(i=>i.room_id===tenant.room_id && normalizeYyyymm(i.yyyymm)===yyyymm);
+  const meter = meterData.find(m=>m.room_id===tenant.room_id && normalizeYyyymm(m.yyyymm)===yyyymm);
+  const rentRole = rowValue(tenant,['rent_role','租金計算']) || 'primary';
+  const rent = rentRole === 'detail' || rentRole === 'no_rent' || rentRole === '不收租金' ? 0 : (Number(tenant.rent) || 0);
+  const water = (Number(tenant.people) || 1) * 100;
+  const electricity = (Number(meter?.used_kwh) || 0) * 5;
+  const previous = idx >= 0 ? invoicesData[idx] : {};
+  const lateFee = invoiceLateFee(previous);
+  const paid = isPaid(previous);
+  const invoice = {
+    ...previous,
+    invoice_id: previous.invoice_id || 'INV' + yyyymm + '-' + tenant.room_id,
+    room_id: tenant.room_id,
+    tenant_name: tenant.name,
+    name: tenant.name,
+    billing_account: rowValue(tenant,['billing_account','帳單對象','合併帳單名稱']) || tenant.name,
+    billing_contact: rowValue(tenant,['billing_contact','收件人','帳務窗口']) || tenant.name,
+    billing_contact_phone: rowValue(tenant,['billing_contact_phone','收件電話']) || tenant.phone || '',
+    billing_line_user_id: rowValue(tenant,['billing_line_user_id']) || tenant.line_user_id || '',
+    rent_role: rentRole,
+    billing_month: yyyymm,
+    yyyymm,
+    rent,
+    water_fee: water,
+    water,
+    electric_fee: electricity,
+    electricity,
+    other_fee: lateFee,
+    late_fee: lateFee,
+    total_amount: rent + water + electricity + lateFee,
+    total: rent + water + electricity + lateFee,
+    status: paid ? 'paid' : 'unpaid',
+    paid,
+    sent: !!(rowValue(tenant,['billing_line_user_id']) || tenant.line_user_id),
+    due_date: previous.due_date || yyyymm.replace('-', '/') + '/10'
+  };
+  if(idx >= 0) invoicesData[idx] = invoice;
+  else invoicesData.push(invoice);
+}
+
+function upsertLocalTenant(payload){
+  const clean = {
+    ...payload,
+    rent: Number(payload.rent) || 0,
+    people: Number(payload.people) || 1,
+    billing_account: payload.billing_account || payload['帳單對象'] || payload.name,
+    billing_contact: payload.billing_contact || payload['帳務窗口'] || payload.name,
+    rent_role: payload.rent_role || payload['租金計算'] || 'primary',
+    status: 'active'
+  };
+  const idx = tenantsData.findIndex(t=>t.room_id===clean.room_id && t.status==='active');
+  if(idx >= 0) tenantsData[idx] = {...tenantsData[idx], ...clean};
+  else tenantsData.push({...clean, line_user_id:'', tenant_id:'T'+Date.now()});
+
+  const roomIdx = roomsData.findIndex(r=>roomKey(r)===clean.room_id);
+  const propertyName = roomBuildingName(clean.room_id);
+  if(roomIdx >= 0) roomsData[roomIdx] = {...roomsData[roomIdx], property_name:roomsData[roomIdx].property_name||propertyName, rent:clean.rent, status:'occupied'};
+  else roomsData.push({room_id:clean.room_id, property_name:propertyName, rent:clean.rent, status:'occupied', note:''});
+  availableData = availableData.filter(r=>roomKey(r)!==clean.room_id);
+  ensureInvoiceForTenant(clean);
+  saveLocalState();
+}
+
+function upsertLocalMeter(payload){
+  const yyyymm = normalizeYyyymm(payload.billing_month);
+  const row = {
+    yyyymm,
+    room_id: payload.room_id,
+    prev_kwh: Number(payload.previous_reading) || 0,
+    curr_kwh: Number(payload.current_reading) || 0,
+    used_kwh: Number(payload.usage) || 0,
+    note: payload.note || ''
+  };
+  const idx = meterData.findIndex(m=>m.room_id===row.room_id && normalizeYyyymm(m.yyyymm)===yyyymm);
+  if(idx >= 0) meterData[idx] = {...meterData[idx], ...row};
+  else meterData.push(row);
+
+  const inv = invoicesData.find(i=>i.room_id===row.room_id && normalizeYyyymm(i.yyyymm)===yyyymm);
+  if(inv){
+    inv.electricity = row.used_kwh * 5;
+    inv.electric_fee = inv.electricity;
+    inv.total = invoiceRent(inv) + invoiceWater(inv) + invoiceElectricity(inv) + invoiceLateFee(inv);
+    inv.total_amount = inv.total;
+  }
+  saveLocalState();
+}
+
+function markLocalInvoicePaid(roomId, month){
+  const inv = invoicesData.find(i=>i.room_id===roomId && normalizeYyyymm(i.yyyymm)===month);
+  if(inv){
+    inv.paid = true;
+    inv.status = 'paid';
+    inv.paid_date = new Date().toISOString().slice(0,10);
+  }
+  saveLocalState();
+}
+
+function markLocalInvoiceGroupPaid(accountKey, month){
+  const tenantMap = tenantMapByRoom();
+  invoicesData.forEach(inv=>{
+    const tenant = tenantMap.get(String(inv.room_id || '').trim());
+    if(normalizeYyyymm(inv.yyyymm)===month && billingGroupKey(inv, tenant)===accountKey){
+      inv.paid = true;
+      inv.status = 'paid';
+      inv.paid_date = new Date().toISOString().slice(0,10);
+    }
+  });
+  saveLocalState();
+}
+
+function markLocalRepairStatus(id, status){
+  const item = repairsData.find(r=>r.id===id);
+  if(item){
+    item.status = status;
+    item.updated_at = new Date().toISOString().slice(0,10);
+  }
+  saveLocalState();
+}
+
+const isRepairDone = item => String(item?.status || '').toLowerCase() === 'done' || String(item?.status || '') === '完成';
+const isRepairOpen = item => !isRepairDone(item);
+const repairStatusKey = item => isRepairDone(item) ? 'done' : 'pending';
+const repairStatusText = item => isRepairDone(item) ? '完成' : '未完成';
+const repairDate = item => item?.date || item?.created_at || item?.updated_at || '';
+
+function addLocalRepair(payload){
+  const today = new Date().toISOString().slice(0,10);
+  const id = payload.task_id || payload.id || ('MR' + Date.now());
+  const item = {
+    id,
+    task_id: id,
+    task_type: 'repair',
+    room_id: payload.room_id,
+    category: payload.category || payload.title || '維修問題',
+    desc: payload.desc || payload.note || '',
+    reporter: payload.reporter || '客服人員',
+    status: 'pending',
+    date: today,
+    created_at: today,
+    updated_at: today,
+    onsite_notice: true
+  };
+  repairsData.unshift(item);
+  logsData.unshift({
+    color: 'orange',
+    text: '新增維修通知：' + item.room_id + '｜' + item.category,
+    time: '剛剛'
+  });
+  logsData = logsData.slice(0,25);
+  saveLocalState();
+  return item;
+}
+
+function populateRepairRoomOptions(){
+  const select = $('rf_room');
+  if(!select) return;
+  const current = select.value;
+  const rooms = getRoomRecords().map(r=>r.room_id).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hant',{numeric:true}));
+  select.innerHTML = '<option value="">選擇房號</option>' + rooms.map(room=>'<option value="'+escapeHtml(room)+'">'+escapeHtml(room)+'</option>').join('');
+  if(current && rooms.includes(current)) select.value = current;
+}
+
+function ensureCompanyBillingDemoData(){
+  if(typeof MOCK_TENANTS === 'undefined' || typeof MOCK_ROOMS === 'undefined' || typeof MOCK_INVOICES === 'undefined') return;
+  const demoTenants = MOCK_TENANTS.filter(t=>String(t.tenant_id || '').startsWith('THM'));
+  if(!demoTenants.length) return;
+  const demoRoomIds = new Set(demoTenants.map(t=>t.room_id));
+  const hasDemoTenant = tenantsData.some(t=>String(t.tenant_id || '').startsWith('THM'));
+  if(!hasDemoTenant) tenantsData.push(...demoTenants);
+  const hasDemoRoom = roomsData.some(r=>demoRoomIds.has(roomKey(r)));
+  if(!hasDemoRoom) roomsData.push(...MOCK_ROOMS.filter(r=>demoRoomIds.has(roomKey(r))));
+  const hasDemoInvoice = invoicesData.some(i=>demoRoomIds.has(i.room_id));
+  if(!hasDemoInvoice) invoicesData.push(...MOCK_INVOICES.filter(i=>demoRoomIds.has(i.room_id)));
+  if(typeof MOCK_METER_DATA !== 'undefined'){
+    const hasDemoMeter = meterData.some(m=>demoRoomIds.has(m.room_id));
+    if(!hasDemoMeter) meterData.push(...MOCK_METER_DATA.filter(m=>demoRoomIds.has(m.room_id)));
+  }
+}
 
 // ── 頁面切換 ──────────────────────────────────────────
 const pageTitles={dashboard:'儀表板',rooms:'房間管理',tenants:'房客管理',billing:'帳單管理',meter:'水電紀錄',repairs:'報修管理',contracts:'合約管理',reports:'月報表統計',available:'可承租房間'};
@@ -124,8 +465,8 @@ $('currentDate').textContent=TODAY.toLocaleDateString('zh-TW',{year:'numeric',mo
 // 建立館別下拉選單
 function initFilters(){
   const uniqueBuildings = new Set();
-  tenantsData.forEach(t => {
-    const b = extractBuilding(t.room_id);
+  getRoomRecords().forEach(t => {
+    const b = t.property_name || extractBuilding(t.room_id);
     if(b) uniqueBuildings.add(b);
   });
   
@@ -144,13 +485,15 @@ function initFilters(){
 
 // === 1. 儀表板 (DASHBOARD) ===
 function renderDashboard(){
-  const active=tenantsData.filter(t=>t.status==='active');
-  const vacant=tenantsData.filter(t=>t.status==='vacant');
-  const totalRooms=tenantsData.length;
+  const roomRecords=getRoomRecords();
+  const active=roomRecords.filter(t=>t.status==='active');
+  const vacant=roomRecords.filter(t=>t.status!=='active');
+  const totalRooms=roomRecords.length;
   
   const yyyymm = $('monthSelector').value;
   const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
-  const revenue=currentInvoices.reduce((s,i)=>s+(Number(i.total) || 0),0);
+  const billingGroups = buildBillingGroups(currentInvoices);
+  const revenue=billingGroups.reduce((s,i)=>s+i.total,0);
   
   $('kpiTotalRooms').textContent=totalRooms;
   $('kpiOccupied').textContent=active.length;
@@ -159,24 +502,30 @@ function renderDashboard(){
   $('kpiOccRate').textContent='↗ 入住率 '+ (totalRooms ? Math.round(active.length/totalRooms*100) : 0)+'%';
 
   // 警示清單
-  const unpaid=currentInvoices.filter(i=>!i.paid);
-  const expiring=active.filter(t=>t.contract_end && diffDays(t.contract_end)<=30 && diffDays(t.contract_end)>0);
-  const expired=active.filter(t=>t.contract_end && diffDays(t.contract_end)<=0);
-  const pendingRepairs=repairsData.filter(r=>r.status==='pending');
+  const unpaid=billingGroups.filter(i=>!i.allPaid);
+  const activeTenants=tenantsData.filter(t=>t.status==='active');
+  const expiring=activeTenants.filter(t=>t.contract_end && diffDays(t.contract_end)<=30 && diffDays(t.contract_end)>0);
+  const expired=activeTenants.filter(t=>t.contract_end && diffDays(t.contract_end)<=0);
+  const pendingRepairs=repairsData.filter(isRepairOpen);
   
   let alerts='';
-  if(unpaid.length)alerts+='<div class="alert-item danger"><span class="alert-icon">🚨</span>本月有 <b>'+unpaid.length+'</b> 位房客尚未繳租</div>';
+  if(unpaid.length)alerts+='<div class="alert-item danger"><span class="alert-icon">🚨</span>本月有 <b>'+unpaid.length+'</b> 張帳單尚未繳清</div>';
   if(expired.length)alerts+='<div class="alert-item danger"><span class="alert-icon">📋</span>有 <b>'+expired.length+'</b> 份合約已過期，請儘速處理續約</div>';
   if(expiring.length)alerts+='<div class="alert-item warn"><span class="alert-icon">⏰</span>有 <b>'+expiring.length+'</b> 份合約將在 30 天內到期</div>';
-  if(pendingRepairs.length)alerts+='<div class="alert-item info"><span class="alert-icon">🔧</span>有 <b>'+pendingRepairs.length+'</b> 件報修待處理</div>';
+  if(pendingRepairs.length)alerts+='<div class="alert-item info"><span class="alert-icon">🔧</span>有 <b>'+pendingRepairs.length+'</b> 件維修未完成，請現場人員查看</div>';
   $('alertStrip').innerHTML=alerts;
 
   // 館別長條圖
-  const maxT=Math.max(...BUILDINGS.map(b=>b.total), 1);
+  const maxT=Math.max(...BUILDINGS.map(b=>{
+    const rooms=roomRecords.filter(r=>(r.property_name||r.room_id).includes(b.name.replace('館','')));
+    return rooms.length || b.total;
+  }), 1);
   $('buildingList').innerHTML=BUILDINGS.map(b=>{
-    const occ=tenantsData.filter(t=>t.room_id.startsWith(b.name.replace('館',''))&&t.status==='active').length;
-    const pct=Math.round(occ/b.total*100) || 0;
-    return '<div class="building-row"><span class="building-name">'+b.name+'</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+Math.round(b.total/maxT*100)+'%;background:'+b.color+'">'+pct+'%</div></div><span class="building-stats">'+occ+'/'+b.total+'</span></div>';
+    const rooms=roomRecords.filter(r=>(r.property_name||r.room_id).includes(b.name.replace('館','')));
+    const total=rooms.length || b.total;
+    const occ=rooms.filter(r=>r.status==='active').length;
+    const pct=Math.round(occ/total*100) || 0;
+    return '<div class="building-row"><span class="building-name">'+b.name+'</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+Math.round(total/maxT*100)+'%;background:'+b.color+'">'+pct+'%</div></div><span class="building-stats">'+occ+'/'+total+'</span></div>';
   }).join('');
 
   // 系統動態
@@ -184,14 +533,14 @@ function renderDashboard(){
 
   // 快速看版
   $('unpaidDashCount').textContent=unpaid.length;
-  $('unpaidQuickList').innerHTML=unpaid.length?unpaid.slice(0,5).map(i=>'<div class="quick-item"><div class="quick-item-left"><span class="room-id">'+i.room_id+'</span><span class="name">'+i.name+'</span></div><span class="badge badge-danger">'+fmt(i.total)+'</span></div>').join(''):'<div class="empty-state">🎉 全部已繳清</div>';
+  $('unpaidQuickList').innerHTML=unpaid.length?unpaid.slice(0,5).map(i=>'<div class="quick-item"><div class="quick-item-left"><span class="room-id">'+escapeHtml(i.account)+'</span><span class="name">'+i.rooms.length+' 間</span></div><span class="badge badge-danger">'+fmt(i.total)+'</span></div>').join(''):'<div class="empty-state">🎉 全部已繳清</div>';
 
   const allExpiring=[...expired,...expiring].sort((a,b)=>diffDays(a.contract_end)-diffDays(b.contract_end));
   $('expiringDashCount').textContent=allExpiring.length;
   $('expiringQuickList').innerHTML=allExpiring.length?allExpiring.slice(0,5).map(t=>{const d=diffDays(t.contract_end);const cls=d<=0?'badge-danger':'badge-warn';const txt=d<=0?'已過期'+Math.abs(d)+'天':'剩'+d+'天';return '<div class="quick-item"><div class="quick-item-left"><span class="room-id">'+t.room_id+'</span><span class="name">'+t.name+'</span></div><span class="badge '+cls+'">'+txt+'</span></div>';}).join(''):'<div class="empty-state">✅ 近期無到期合約</div>';
 
   $('repairDashCount').textContent=pendingRepairs.length;
-  $('repairQuickList').innerHTML=pendingRepairs.length?pendingRepairs.slice(0,5).map(r=>'<div class="quick-item"><div class="quick-item-left"><span class="room-id">'+r.room_id+'</span><span class="name">'+r.desc.substring(0,12)+'...</span></div><span class="badge badge-info">'+r.category+'</span></div>').join(''):'<div class="empty-state">✅ 無待處理報修</div>';
+  $('repairQuickList').innerHTML=pendingRepairs.length?pendingRepairs.slice(0,5).map(r=>'<div class="quick-item"><div class="quick-item-left"><span class="room-id">'+escapeHtml(r.room_id)+'</span><span class="name">'+escapeHtml(String(r.desc || '').substring(0,12))+'...</span></div><span class="badge badge-info">'+escapeHtml(r.category)+'</span></div>').join(''):'<div class="empty-state">✅ 無未完成維修</div>';
 
   // 側邊欄通知氣泡
   $('navVacantBadge').textContent=vacant.length;
@@ -202,19 +551,23 @@ function renderDashboard(){
 
 // === 2. 房間管理 (ROOMS) ===
 function renderRooms(filter={}){
-  let list=[...tenantsData];
-  if(filter.building&&filter.building!=='all')list=list.filter(t=>t.room_id.includes(filter.building));
+  let list=getRoomRecords();
+  if(filter.building&&filter.building!=='all')list=list.filter(t=>(t.property_name||t.room_id).includes(filter.building));
   if(filter.status==='occupied')list=list.filter(t=>t.status==='active');
   else if(filter.status==='vacant')list=list.filter(t=>t.status==='vacant');
-  if(filter.search)list=list.filter(t=>t.room_id.toLowerCase().includes(filter.search.toLowerCase()));
+  else if(filter.status==='cleaning')list=list.filter(t=>t.status==='cleaning');
+  if(filter.search){
+    const q=filter.search.toLowerCase();
+    list=list.filter(t=>t.room_id.toLowerCase().includes(q)||String(t.name||'').toLowerCase().includes(q));
+  }
 
   // 網格視圖
   const groups={};
-  list.forEach(t=>{const b=extractBuilding(t.room_id);if(!groups[b])groups[b]=[];groups[b].push(t)});
-  $('roomGridContainer').innerHTML=Object.keys(groups).map(b=>'<div class="room-building-section"><div class="room-building-title">🏢 '+b+'</div><div class="room-grid">'+groups[b].map(t=>{const cls=t.status==='active'?'occupied':'vacant';return '<div class="room-cell '+cls+'"><div class="room-num">'+t.room_id.replace(b,'')+'</div><div class="room-tenant">'+(t.name||'空房')+'</div></div>';}).join('')+'</div></div>').join('');
+  list.forEach(t=>{const b=t.property_name||extractBuilding(t.room_id);if(!groups[b])groups[b]=[];groups[b].push(t)});
+  $('roomGridContainer').innerHTML=Object.keys(groups).map(b=>'<div class="room-building-section"><div class="room-building-title">🏢 '+escapeHtml(b)+'</div><div class="room-grid">'+groups[b].map(t=>{const cls=t.status==='active'?'occupied':t.status==='cleaning'?'cleaning':'vacant';const label=t.status==='active'?(t.name||'已出租'):t.status==='cleaning'?'整理中':'空房';return '<div class="room-cell '+cls+'" role="button" tabindex="0" data-action="openRoom" data-room="'+escapeHtml(t.room_id)+'" title="查看 '+escapeHtml(t.room_id)+'"><div class="room-num">'+escapeHtml(t.room_id.replace(b,''))+'</div><div class="room-tenant">'+escapeHtml(label)+'</div></div>';}).join('')+'</div></div>').join('');
 
   // 列表視圖
-  $('roomTbody').innerHTML=list.map(t=>{const occ=t.status==='active';const bound=!!t.line_user_id;const d=t.contract_end?diffDays(t.contract_end):'';const dcls=d!==''?(d<=0?'expired':d<=30?'urgent':'safe'):'';return '<tr><td class="room-id">'+t.room_id+'</td><td><span class="badge badge-info">'+extractBuilding(t.room_id)+'</span></td><td><span class="badge '+(occ?'badge-success':'badge-warn')+'">'+(occ?'已出租':'空房')+'</span></td><td>'+(t.name||'-')+'</td><td class="amount">'+(occ?fmt(t.rent):'-')+'</td><td>'+(occ?'<span class="line-status"><span class="line-dot '+(bound?'bound':'unbound')+'"></span>'+(bound?'已綁':'未綁')+'</span>':'-')+'</td><td>'+(t.contract_end?'<span class="contract-days '+dcls+'">'+(d<=0?'已過期':'剩'+d+'天')+'</span>':'-')+'</td></tr>';}).join('');
+  $('roomTbody').innerHTML=list.map(t=>{const occ=t.status==='active';const bound=!!t.line_user_id;const d=t.contract_end?diffDays(t.contract_end):'';const dcls=d!==''?(d<=0?'expired':d<=30?'urgent':'safe'):'';const statusLabel=occ?'已出租':t.status==='cleaning'?'整理中':'空房';const badge=occ?'badge-success':t.status==='cleaning'?'badge-warn':'badge-info';return '<tr><td class="room-id">'+escapeHtml(t.room_id)+'</td><td><span class="badge badge-info">'+escapeHtml(t.property_name||extractBuilding(t.room_id))+'</span></td><td><span class="badge '+badge+'">'+statusLabel+'</span></td><td>'+escapeHtml(t.name||'-')+'</td><td class="amount">'+(t.rent?fmt(t.rent):'-')+'</td><td>'+(occ?'<span class="line-status"><span class="line-dot '+(bound?'bound':'unbound')+'"></span>'+(bound?'已綁':'未綁')+'</span>':'-')+'</td><td>'+(t.contract_end?'<span class="contract-days '+dcls+'">'+(d<=0?'已過期':'剩'+d+'天')+'</span>':'-')+'</td><td><button class="btn btn-sm btn-ghost" data-action="openRoom" data-room="'+escapeHtml(t.room_id)+'">查看</button></td></tr>';}).join('');
 }
 
 // 房間過濾監聽
@@ -240,19 +593,28 @@ $('tenantStatusFilter').addEventListener('change',applyTenantFilters);
 function applyTenantFilters(){renderTenants({search:$('tenantSearch').value,building:$('tenantBuildingFilter').value,status:$('tenantStatusFilter').value})}
 
 // === 4. 帳單管理 (BILLING) ===
+function billingRoomDetailsHtml(group){
+  return '<div class="billing-detail-grid">' + group.rooms.map(room=>{
+    const rentLine = room.rent ? '<span>租金 '+fmt(room.rent)+'</span>' : '';
+    const lateLine = room.lateFee ? '<span>滯納 '+fmt(room.lateFee)+'</span>' : '';
+    return '<div class="billing-detail-chip"><strong>'+escapeHtml(room.room_id)+'</strong>'+rentLine+'<span>電費 '+fmt(room.electricity)+'</span><span>水費 '+fmt(room.water)+'</span>'+lateLine+'</div>';
+  }).join('') + '</div>';
+}
+
 function renderBilling(){
   const yyyymm = $('monthSelector').value;
   const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
+  const groupedInvoices = buildBillingGroups(currentInvoices);
   
-  const total=currentInvoices.reduce((s,i)=>s+(Number(i.total) || 0),0);
-  const sent=currentInvoices.filter(i=>i.sent).length;
-  const unpaid=currentInvoices.filter(i=>!i.paid);
+  const total=groupedInvoices.reduce((s,i)=>s+i.total,0);
+  const sent=groupedInvoices.filter(i=>i.sent).length;
+  const unpaid=groupedInvoices.filter(i=>!i.allPaid);
   
-  $('kpiBillCount').textContent=currentInvoices.length;
+  $('kpiBillCount').textContent=groupedInvoices.length;
   $('kpiBillSent').textContent=sent;
   $('kpiBillUnpaid').textContent=unpaid.length;
   $('kpiBillTotal').textContent=fmt(total);
-  $('unpaidBillCount').textContent=unpaid.length+'位';
+  $('unpaidBillCount').textContent=unpaid.length+'張';
 
   // 逾期計算 (基準為當月 10 號)
   const [year, month] = yyyymm.split('-');
@@ -260,14 +622,16 @@ function renderBilling(){
   const overDays = Math.max(0, diffDays(dueBase) * -1);
 
   $('unpaidTbody').innerHTML=unpaid.length?unpaid.map(i=>{
-    return '<tr><td class="room-id">'+i.room_id+'</td><td>'+i.name+'</td><td class="amount" style="font-weight:800;color:var(--danger-600)">'+fmt(i.total)+'</td><td>'+(i.due_date || (year+'/'+month+'/10'))+'</td><td><span class="badge badge-danger">逾期 '+overDays+' 天</span></td><td><span class="badge badge-danger">❌ 未繳</span></td></tr>';
+    return '<tr><td class="room-id">'+escapeHtml(i.account)+'</td><td>'+escapeHtml(i.contact)+'</td><td><span class="badge badge-info">'+i.rooms.length+' 間</span></td><td class="amount" style="font-weight:800;color:var(--danger-600)">'+fmt(i.total)+'</td><td>'+(i.dueDate || (year+'/'+month+'/10'))+'</td><td><span class="badge badge-danger">逾期 '+overDays+' 天</span></td></tr>';
   }).join(''):'<tr><td colspan="6" class="empty-state">🎉 全部已繳清</td></tr>';
 
-  $('billingTbody').innerHTML=currentInvoices.map(i=>{
-    const yyyymm=$('monthSelector').value;
-    const [year,month]=yyyymm.split('-');
-    const paidBtn=i.paid?'<span class="badge badge-success">✅ 已繳</span>':'<button class="btn btn-sm btn-success" data-action="markPaid" data-room="'+i.room_id+'" data-month="'+yyyymm+'">標記已繳</button>';
-    return '<tr><td class="room-id">'+i.room_id+'</td><td>'+i.name+'</td><td class="amount">'+fmt(i.rent)+'</td><td class="amount">'+fmt(i.electricity)+'</td><td class="amount">'+fmt(i.water)+'</td><td class="amount">'+(i.late_fee>0?fmt(i.late_fee):'-')+'</td><td class="amount" style="font-weight:800">'+fmt(i.total)+'</td><td>'+(i.due_date||(year+'/'+month+'/10'))+'</td><td>'+paidBtn+'</td></tr>';
+  $('billingTbody').innerHTML=groupedInvoices.map(i=>{
+    const paidBtn=i.allPaid
+      ? '<span class="badge badge-success">✅ 已繳</span>'
+      : '<button class="btn btn-sm btn-success" data-action="markPaidGroup" data-account="'+escapeHtml(i.key)+'" data-label="'+escapeHtml(i.account)+'" data-month="'+yyyymm+'">標記已繳</button>';
+    const statusHint = i.sent ? '<span class="badge badge-info">可發送</span>' : '<span class="badge badge-warn">待綁定</span>';
+    const summary = '<span class="badge badge-neutral">'+i.rooms.length+' 間</span><span class="billing-room-preview">'+escapeHtml(i.rooms.slice(0,4).map(r=>r.room_id).join('、'))+(i.rooms.length>4?' 等':'')+'</span>';
+    return '<tr class="billing-group-row"><td class="room-id">'+escapeHtml(i.account)+'</td><td>'+escapeHtml(i.contact)+'</td><td>'+summary+'</td><td class="amount">'+fmt(i.rent)+'</td><td class="amount">'+fmt(i.electricity)+'</td><td class="amount">'+fmt(i.water)+'</td><td class="amount">'+(i.lateFee>0?fmt(i.lateFee):'-')+'</td><td class="amount" style="font-weight:800">'+fmt(i.total)+'</td><td><div class="billing-status-stack">'+statusHint+paidBtn+'</div></td></tr><tr class="billing-detail-row"><td colspan="9">'+billingRoomDetailsHtml(i)+'</td></tr>';
   }).join('');
 }
 
@@ -287,27 +651,44 @@ function renderMeter(){
   
   $('meterTbody').innerHTML=currentMeter.length ? currentMeter.map(m=>{
     const name = tenantMap[m.room_id] || '-';
-    const elecCharge = invoiceMap[m.room_id] ? invoiceMap[m.room_id].electricity : 0;
+    const elecCharge = invoiceMap[m.room_id] ? invoiceElectricity(invoiceMap[m.room_id]) : 0;
     const usedK = Number(m.used_kwh) || 0;
     const pct=Math.round(usedK/maxK*100);
     const lv=usedK>160?'high':usedK>100?'medium':'low';
-    return '<tr><td class="room-id">'+m.room_id+'</td><td>'+name+'</td><td class="amount">'+(m.prev_kwh || 0)+'</td><td class="amount">'+(m.curr_kwh || 0)+'</td><td class="amount" style="font-weight:700">'+usedK+' 度</td><td class="amount">'+fmt(elecCharge)+'</td><td><div class="meter-bar-wrapper"><div class="meter-bar"><div class="meter-bar-fill '+lv+'" style="width:'+pct+'%"></div></div><span class="meter-kwh">'+usedK+'度</span></div></td></tr>';
+    return '<tr><td class="room-id">'+escapeHtml(m.room_id)+'</td><td>'+escapeHtml(name)+'</td><td class="amount">'+(m.prev_kwh || 0)+'</td><td class="amount">'+(m.curr_kwh || 0)+'</td><td class="amount" style="font-weight:700">'+usedK+' 度</td><td class="amount">'+fmt(elecCharge)+'</td><td><div class="meter-bar-wrapper"><div class="meter-bar"><div class="meter-bar-fill '+lv+'" style="width:'+pct+'%"></div></div><span class="meter-kwh">'+usedK+'度</span></div></td></tr>';
   }).join('') : '<tr><td colspan="7" class="empty-state">本月尚無電表讀數紀錄</td></tr>';
 }
 
 // === 6. 報修管理 (REPAIRS) ===
 function renderRepairs(statusFilter='all'){
   let list=[...repairsData];
-  if(statusFilter!=='all')list=list.filter(r=>r.status===statusFilter);
-  const statusMap={pending:'待處理',in_progress:'處理中',done:'已完成'};
-  const badgeMap={pending:'badge-danger',in_progress:'badge-warn',done:'badge-success'};
+  if(statusFilter==='open')list=list.filter(isRepairOpen);
+  else if(statusFilter==='done')list=list.filter(isRepairDone);
+  list.sort((a,b)=>Number(isRepairDone(a))-Number(isRepairDone(b)) || String(repairDate(b)).localeCompare(String(repairDate(a))));
+  const openRepairs=repairsData.filter(isRepairOpen);
   
   $('kpiRepairTotal').textContent=repairsData.length;
-  $('kpiRepairPending').textContent=repairsData.filter(r=>r.status==='pending').length;
-  $('kpiRepairProgress').textContent=repairsData.filter(r=>r.status==='in_progress').length;
-  $('kpiRepairDone').textContent=repairsData.filter(r=>r.status==='done').length;
+  $('kpiRepairPending').textContent=openRepairs.length;
+  $('kpiRepairProgress').textContent=openRepairs.length;
+  $('kpiRepairDone').textContent=repairsData.filter(isRepairDone).length;
+
+  const noticeCount=$('repairNoticeCount');
+  const noticeList=$('repairNoticeList');
+  if(noticeCount) noticeCount.textContent=openRepairs.length+' 件';
+  if(noticeList){
+    noticeList.innerHTML=openRepairs.length ? openRepairs.slice(0,6).map(r=>{
+      return '<div class="onsite-notice-item"><div><div class="onsite-notice-room">'+escapeHtml(r.room_id)+'</div><div class="onsite-notice-desc">'+escapeHtml(r.category)+'｜'+escapeHtml(String(r.desc || '').substring(0,42))+'</div></div><button class="btn btn-sm btn-success" data-action="setRepairStatus" data-id="'+escapeHtml(r.id)+'" data-status="done">完成</button></div>';
+    }).join('') : '<div class="empty-state">目前沒有需要現場處理的維修通知</div>';
+  }
   
-  $('repairCards').innerHTML=list.map(r=>'<div class="repair-card status-'+r.status+'"><div class="repair-card-header"><div><div class="repair-room">'+r.room_id+'</div><span class="badge badge-info" style="margin-top:4px">'+r.category+'</span></div><div style="text-align:right"><span class="badge '+badgeMap[r.status]+'">'+statusMap[r.status]+'</span><div class="repair-date" style="margin-top:4px">'+r.date+'</div></div></div><div class="repair-desc">'+r.desc+'</div><div class="repair-footer"><span class="repair-reporter">報修人：'+r.reporter+'</span></div></div>').join('');
+  $('repairCards').innerHTML=list.length ? list.map(r=>{
+    const key=repairStatusKey(r);
+    const badge=key==='done'?'badge-success':'badge-danger';
+    const actions = key==='done'
+      ? '<button class="btn btn-sm btn-ghost" data-action="setRepairStatus" data-id="'+escapeHtml(r.id)+'" data-status="pending">重開未完成</button>'
+      : '<button class="btn btn-sm btn-success" data-action="setRepairStatus" data-id="'+escapeHtml(r.id)+'" data-status="done">標記完成</button>';
+    return '<div class="repair-card status-'+key+'"><div class="repair-card-header"><div><div class="repair-room">'+escapeHtml(r.room_id)+'</div><span class="badge badge-info" style="margin-top:4px">'+escapeHtml(r.category)+'</span></div><div style="text-align:right"><span class="badge '+badge+'">'+repairStatusText(r)+'</span><div class="repair-date" style="margin-top:4px">'+escapeHtml(repairDate(r))+'</div></div></div><div class="repair-desc">'+escapeHtml(r.desc)+'</div><div class="repair-footer"><span class="repair-reporter">登錄人：'+escapeHtml(r.reporter||'客服人員')+'</span><div class="repair-actions">'+actions+'</div></div></div>';
+  }).join('') : '<div class="empty-state">目前沒有符合條件的維修紀錄</div>';
 }
 $('repairStatusFilter').addEventListener('change',()=>renderRepairs($('repairStatusFilter').value));
 
@@ -337,10 +718,10 @@ function renderReports(){
   const yyyymm = $('monthSelector').value;
   const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
   
-  const totalRev=currentInvoices.reduce((s,i)=>s+(Number(i.total) || 0),0);
-  const totalRent=currentInvoices.reduce((s,i)=>s+(Number(i.rent) || 0),0);
-  const totalElec=currentInvoices.reduce((s,i)=>s+(Number(i.electricity) || 0),0);
-  const totalWater=currentInvoices.reduce((s,i)=>s+(Number(i.water) || 0),0);
+  const totalRev=currentInvoices.reduce((s,i)=>s+invoiceTotal(i),0);
+  const totalRent=currentInvoices.reduce((s,i)=>s+invoiceRent(i),0);
+  const totalElec=currentInvoices.reduce((s,i)=>s+invoiceElectricity(i),0);
+  const totalWater=currentInvoices.reduce((s,i)=>s+invoiceWater(i),0);
   
   $('reportSummary').innerHTML='<div class="report-stat"><div class="report-stat-value">'+fmt(totalRev)+'</div><div class="report-stat-label">總營收</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalRent)+'</div><div class="report-stat-label">租金收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalElec)+'</div><div class="report-stat-label">電費收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalWater)+'</div><div class="report-stat-label">水費收入</div></div>';
 
@@ -348,7 +729,7 @@ function renderReports(){
   const monthMap = {};
   invoicesData.forEach(i => {
     const m = normalizeYyyymm(i.yyyymm);
-    if(m) monthMap[m] = (monthMap[m] || 0) + (Number(i.total) || 0);
+    if(m) monthMap[m] = (monthMap[m] || 0) + invoiceTotal(i);
   });
   
   const months = Object.keys(monthMap).sort();
@@ -373,25 +754,57 @@ function renderReports(){
   // 館別分配
   $('buildingRevenueList').innerHTML=BUILDINGS.map(b=>{
     const bInv=currentInvoices.filter(i=>i.room_id.includes(b.name.replace('館','')));
-    const bRev=bInv.reduce((s,i)=>s+(Number(i.total) || 0),0);
+    const bRev=bInv.reduce((s,i)=>s+invoiceTotal(i),0);
     const pct=totalRev ? Math.round(bRev/totalRev*100) : 0;
     return '<div class="building-row"><span class="building-name">'+b.name+'</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+pct+'%;background:'+b.color+'">'+pct+'%</div></div><span class="building-stats">'+fmt(bRev)+'</span></div>';
   }).join('');
 
   // 統計清單
+  const roomRecords=getRoomRecords();
   const active=tenantsData.filter(t=>t.status==='active');
-  const vacant=tenantsData.filter(t=>t.status==='vacant');
+  const vacant=roomRecords.filter(t=>t.status!=='active');
   const bound=active.filter(t=>t.line_user_id);
   const avgRent=active.length ? Math.round(totalRent/active.length) : 0;
   
   $('statList').innerHTML=[
-    ['總房間數',tenantsData.length+'間'],['已出租',active.length+'間'],['空房',vacant.length+'間'],
-    ['入住率',(tenantsData.length ? Math.round(active.length/tenantsData.length*100) : 0)+'%'],
+    ['總房間數',roomRecords.length+'間'],['已出租',active.length+'間'],['空房/整理中',vacant.length+'間'],
+    ['入住率',(roomRecords.length ? Math.round(active.length/roomRecords.length*100) : 0)+'%'],
     ['LINE 綁定率',(active.length ? Math.round(bound.length/active.length*100) : 0)+'%'],
     ['平均租金',fmt(avgRent)],['本月總電費',fmt(totalElec)],['本月總水費',fmt(totalWater)],
   ].map(([l,v])=>'<div class="stat-row"><span class="stat-label">'+l+'</span><span class="stat-value">'+v+'</span></div>').join('');
 }
-$('exportReportBtn').addEventListener('click',()=>alert('報表匯出功能：請直接前往 Google Sheets 下載 invoices 頁面即可！'));
+
+function downloadReportCSV(){
+  const yyyymm = $('monthSelector').value;
+  const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
+  const rows = [
+    ['月份','房號','姓名','租金','電費','水費','滯納金','總計','截止日','繳費狀態'],
+    ...currentInvoices.map(i=>[
+      yyyymm,
+      i.room_id,
+      invoiceName(i),
+      invoiceRent(i),
+      invoiceElectricity(i),
+      invoiceWater(i),
+      invoiceLateFee(i),
+      invoiceTotal(i),
+      i.due_date || '',
+      isPaid(i) ? '已繳' : '未繳'
+    ])
+  ];
+  const csv = rows.map(row=>row.map(cell=>'"'+String(cell ?? '').replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '租賃月報表-' + yyyymm + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('CSV 報表已匯出 ✅');
+}
+$('exportReportBtn').addEventListener('click',downloadReportCSV);
 
 // === 9. 可承租房間 (AVAILABLE) ===
 function renderAvailable(){
@@ -425,8 +838,68 @@ function renderAvailable(){
       roomId = '<span style="color:var(--danger-600);font-size:0.8rem;font-weight:normal">⚠️ 試算表欄位請設為純文字</span>';
     }
 
-    return '<div class="available-card"><div class="available-card-room">🔑 ' + (building ? building + ' ' : '') + roomId + '</div><div class="available-card-price">月租 ' + fmt(rent) + '</div></div>';
+    const detailRoom = typeof roomId === 'string' && !roomId.includes('<') ? roomId : '';
+    const roomLabel = detailRoom ? escapeHtml(roomId) : roomId;
+    return '<div class="available-card" role="button" tabindex="0" data-action="openAvailable" data-room="'+escapeHtml(detailRoom)+'"><div class="available-card-room">🔑 ' + escapeHtml(building ? building + ' ' : '') + roomLabel + '</div><div class="available-card-price">月租 ' + fmt(rent) + '</div></div>';
   }).join('') : '<div class="empty-state">🎉 目前無待出租空房！</div>';
+}
+
+function openDetailModal(title, bodyHtml){
+  const titleEl = $('detailModalTitle');
+  const bodyEl = $('detailModalBody');
+  if(!titleEl || !bodyEl) return;
+  titleEl.textContent = title;
+  bodyEl.innerHTML = bodyHtml;
+  openModal('modalDetail');
+}
+
+function detailRows(rows){
+  return '<div class="detail-list">'+rows.map(([label,value])=>'<div class="detail-row"><span>'+escapeHtml(label)+'</span><strong>'+value+'</strong></div>').join('')+'</div>';
+}
+
+function openRoomDetail(roomId){
+  const room = getRoomRecord(roomId);
+  if(!room){ showToast('找不到房間資料','error'); return; }
+  const yyyymm = $('monthSelector').value;
+  const invoice = invoicesData.find(i=>i.room_id===roomId && normalizeYyyymm(i.yyyymm)===yyyymm);
+  const meter = meterData.find(m=>m.room_id===roomId && normalizeYyyymm(m.yyyymm)===yyyymm);
+  const statusLabel = room.status==='active' ? '已出租' : room.status==='cleaning' ? '整理中' : '空房';
+  const statusClass = room.status==='active' ? 'badge-success' : room.status==='cleaning' ? 'badge-warn' : 'badge-info';
+  const d = room.contract_end ? diffDays(room.contract_end) : '';
+  const contractText = room.contract_end ? escapeHtml(room.contract_end)+'（'+(d<=0?'已過期 '+Math.abs(d)+' 天':'剩 '+d+' 天')+'）' : '-';
+  const invoiceText = invoice ? fmt(invoiceTotal(invoice)) + ' / ' + (isPaid(invoice) ? '已繳' : '未繳') : '本月尚無帳單';
+  const meterText = meter ? escapeHtml(meter.prev_kwh || 0)+' → '+escapeHtml(meter.curr_kwh || 0)+'（'+escapeHtml(meter.used_kwh || 0)+' 度）' : '本月尚無讀數';
+  const rows = [
+    ['出租狀態','<span class="badge '+statusClass+'">'+statusLabel+'</span>'],
+    ['館別',escapeHtml(room.property_name || extractBuilding(room.room_id))],
+    ['月租',room.rent ? fmt(room.rent) : '-'],
+    ['房客',escapeHtml(room.name || '-')],
+    ['電話',escapeHtml(room.phone || '-')],
+    ['LINE 綁定',room.status==='active' ? (room.line_user_id ? '已綁定' : '未綁定') : '-'],
+    ['合約到期',contractText],
+    ['本月帳單',invoiceText],
+    ['電表讀數',meterText],
+    ['備註',escapeHtml(room.note || '-')]
+  ];
+  openDetailModal(room.room_id, detailRows(rows));
+}
+
+function openAvailableDetail(roomId){
+  const item = availableData.find(r=>roomKey(r)===roomId);
+  const room = getRoomRecord(roomId);
+  if(!item && !room){ showToast('找不到空房資料','error'); return; }
+  const features = item?.features || [];
+  const rows = [
+    ['館別',escapeHtml(item?.['館別'] || room?.property_name || extractBuilding(roomId))],
+    ['房號',escapeHtml(roomId)],
+    ['月租',fmt(item?.['月租'] || item?.rent || room?.rent || 0)],
+    ['房型',escapeHtml(item?.type || '套房')],
+    ['坪數',escapeHtml(item?.size || '-')],
+    ['樓層',escapeHtml(item?.floor || '-')],
+    ['設備',features.length ? features.map(escapeHtml).join('、') : '獨立衛浴、冷氣、床組'],
+    ['狀態',room?.status==='cleaning' ? '<span class="badge badge-warn">整理中</span>' : '<span class="badge badge-info">可承租</span>']
+  ];
+  openDetailModal('可承租房間：'+roomId, detailRows(rows));
 }
 
 // ── 綁定月份下拉選單變更重渲染 ──────────────────────────
@@ -544,6 +1017,7 @@ function loadData() {
           tenantsData = data.tenants || [];
           invoicesData = data.invoices || [];
           meterData = data.meter || [];
+          roomsData = data.rooms || [];
           availableData = data.available || [];
           logsData = data.logs || [];
           configData = data.config || {};
@@ -582,9 +1056,12 @@ function loadData() {
     tenantsData  = MOCK_TENANTS;
     invoicesData = MOCK_INVOICES;
     meterData    = MOCK_METER_DATA || [];
+    roomsData    = MOCK_ROOMS || [];
     availableData= AVAILABLE_ROOMS;
     logsData     = MOCK_ACTIVITIES;
-    repairsData  = MOCK_REPAIRS;
+    repairsData  = [];
+    loadLocalState();
+    ensureCompanyBillingDemoData();
     showSheetStatus(false);
     init();
 
@@ -612,6 +1089,7 @@ function loadData() {
           if(row.timestamp){try{const d=new Date(row.timestamp);timeStr=(d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}catch(e){}}
           return {color,text:text.replace('收到：','').replace('doPost: ',''),time:timeStr};
         });
+        ensureCompanyBillingDemoData();
         showSheetStatus(true,'JSONP');
         init(); // 更新畫面
       }).catch(err => {
@@ -624,6 +1102,7 @@ function loadData() {
 // ── 啟動 ─────────────────────────────────────────────
 function init(){
   initFilters();
+  populateRepairRoomOptions();
   renderDashboard();
   renderRooms();
   renderTenants();
@@ -636,12 +1115,18 @@ function init(){
   initCRUD();
 }
 
-loadData();
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', loadData, {once:true});
+} else {
+  loadData();
+}
 
 // ═══════════════════════════════════════════════════════
 //  CRUD 功能：新增房客 / 新增電表 / 標記已繳 / 已聯絡
 // ═══════════════════════════════════════════════════════
 function initCRUD(){
+  if(crudInitialized) return;
+  crudInitialized = true;
   // ── 新增房客 ────────────────────────────────────────
   const addTenantBtn = $('addTenantBtn');
   if(addTenantBtn) addTenantBtn.onclick = () => openModal('modalTenant');
@@ -666,9 +1151,10 @@ function initCRUD(){
       showToast('房客資料已儲存 ✅');
       closeModal('modalTenant');
       tenantForm.reset();
-      // 本地追加（真實環境會重新 loadData）
-      tenantsData.push({...payload, line_user_id:'', tenant_id:'T'+Date.now()});
-      renderTenants(); renderDashboard();
+      upsertLocalTenant(payload);
+      initFilters();
+      populateRepairRoomOptions();
+      renderRooms(); renderTenants(); renderBilling(); renderDashboard(); renderReports(); renderAvailable();
     } catch(err){ showToast('儲存失敗：'+err.message,'error'); }
   };
 
@@ -701,8 +1187,8 @@ function initCRUD(){
       showToast('電表讀數已儲存 ✅');
       closeModal('modalMeter');
       meterForm.reset();
-      meterData.push({yyyymm:payload.billing_month, room_id:payload.room_id, prev_kwh:prev, curr_kwh:curr, used_kwh:payload.usage});
-      renderMeter();
+      upsertLocalMeter(payload);
+      renderMeter(); renderBilling(); renderDashboard(); renderReports();
     } catch(err){ showToast('儲存失敗：'+err.message,'error'); }
   };
 
@@ -715,9 +1201,24 @@ function initCRUD(){
     if(!confirm('確定將 '+roomId+' 標記為已繳租？')) return;
     try{
       await apiRequest('POST',{action:'upsert',table:'invoices',payload:{room_id:roomId, yyyymm:month, paid:true, paid_date:new Date().toISOString().slice(0,10)}});
-      const inv = invoicesData.find(i=>i.room_id===roomId && normalizeYyyymm(i.yyyymm)===month);
-      if(inv){ inv.paid=true; inv.status='paid'; }
+      markLocalInvoicePaid(roomId, month);
       showToast(roomId+' 已標記為已繳 ✅');
+      renderBilling(); renderDashboard();
+    } catch(err){ showToast('操作失敗：'+err.message,'error'); }
+  });
+
+  // ── 標記合併帳單已繳 ─────────────────────────────────
+  document.addEventListener('click', async function(e){
+    const btn = e.target.closest('[data-action="markPaidGroup"]');
+    if(!btn) return;
+    const accountKey = btn.dataset.account;
+    const accountLabel = btn.dataset.label || accountKey;
+    const month = btn.dataset.month;
+    if(!confirm('確定將 '+accountLabel+' '+month+' 的合併帳單標記為已繳？')) return;
+    try{
+      await apiRequest('POST',{action:'markPaidGroup',table:'invoices',payload:{billing_account:accountLabel, yyyymm:month, paid:true, paid_date:new Date().toISOString().slice(0,10)}});
+      markLocalInvoiceGroupPaid(accountKey, month);
+      showToast(accountLabel+' 合併帳單已標記為已繳 ✅');
       renderBilling(); renderDashboard();
     } catch(err){ showToast('操作失敗：'+err.message,'error'); }
   });
@@ -731,6 +1232,72 @@ function initCRUD(){
       await apiRequest('POST',{action:'upsert',table:'tasks',payload:{room_id:roomId, task_type:'contract', status:'contacted', updated_at:new Date().toISOString().slice(0,10)}});
       showToast(roomId+' 已標記為已聯絡 📞');
       btn.closest('tr').querySelector('td:last-child').innerHTML='<span class="badge badge-success">✅ 已聯絡</span>';
+    } catch(err){ showToast('操作失敗：'+err.message,'error'); }
+  });
+
+  // ── 房間 / 空房詳細資料 ───────────────────────────────
+  document.addEventListener('click', function(e){
+    const roomBtn = e.target.closest('[data-action="openRoom"]');
+    if(roomBtn){ openRoomDetail(roomBtn.dataset.room); return; }
+    const availableBtn = e.target.closest('[data-action="openAvailable"]');
+    if(availableBtn && availableBtn.dataset.room){ openAvailableDetail(availableBtn.dataset.room); }
+  });
+
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    const target = e.target.closest('[data-action="openRoom"], [data-action="openAvailable"]');
+    if(!target) return;
+    e.preventDefault();
+    if(target.dataset.action === 'openRoom') openRoomDetail(target.dataset.room);
+    if(target.dataset.action === 'openAvailable' && target.dataset.room) openAvailableDetail(target.dataset.room);
+  });
+
+  // ── 新增維修紀錄 ─────────────────────────────────────
+  const repairForm = $('repairForm');
+  if(repairForm) repairForm.onsubmit = async function(e){
+    e.preventDefault();
+    const today = new Date().toISOString().slice(0,10);
+    const id = 'MR' + Date.now();
+    const payload = {
+      task_id: id,
+      task_type: 'repair',
+      room_id: $('rf_room').value.trim(),
+      title: $('rf_category').value.trim(),
+      category: $('rf_category').value.trim(),
+      note: $('rf_desc').value.trim(),
+      desc: $('rf_desc').value.trim(),
+      reporter: $('rf_reporter').value.trim() || '客服人員',
+      status: 'pending',
+      created_at: today,
+      updated_at: today
+    };
+    if(!payload.room_id || !payload.category || !payload.desc){
+      showToast('請選擇房號、問題類型並輸入故障敘述','error');
+      return;
+    }
+    try{
+      await apiRequest('POST',{action:'upsert',table:'tasks',payload});
+      addLocalRepair(payload);
+      repairForm.reset();
+      $('rf_reporter').value = '客服人員';
+      showToast('維修紀錄已新增，已通知現場人員 ✅');
+      renderRepairs($('repairStatusFilter').value);
+      renderDashboard();
+    } catch(err){ showToast('新增失敗：'+err.message,'error'); }
+  };
+
+  // ── 報修狀態切換 ─────────────────────────────────────
+  document.addEventListener('click', async function(e){
+    const btn = e.target.closest('[data-action="setRepairStatus"]');
+    if(!btn) return;
+    const id = btn.dataset.id;
+    const status = btn.dataset.status;
+    try{
+      await apiRequest('POST',{action:'upsert',table:'tasks',payload:{task_id:id, status, updated_at:new Date().toISOString().slice(0,10)}});
+      markLocalRepairStatus(id, status);
+      showToast('報修狀態已更新 ✅');
+      renderRepairs($('repairStatusFilter').value);
+      renderDashboard();
     } catch(err){ showToast('操作失敗：'+err.message,'error'); }
   });
 
@@ -756,5 +1323,3 @@ document.addEventListener('click', function(e) {
     renderAvailable();
   }
 });
-
-
