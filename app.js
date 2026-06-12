@@ -40,27 +40,33 @@ function fetchGasJSONP(action='getAll', params={}){
   });
 }
 
-function sendGasBeacon(body){
-  if(!HAS_GAS_WEB_APP || typeof navigator === 'undefined' || !navigator.sendBeacon || typeof Blob === 'undefined') return false;
-  try{
-    const blob = new Blob([JSON.stringify(body)], { type:'text/plain;charset=utf-8' });
-    return navigator.sendBeacon(GAS_WEB_APP_URL, blob);
-  } catch(err) {
-    console.warn('sendGasBeacon failed:', err);
-    return false;
-  }
+function isRepairSyncBody(body){
+  if(!body || body.table !== 'tasks') return false;
+  const payload = body.payload || {};
+  const id = String(payload.task_id || payload.id || '');
+  return String(payload.task_type || '').toLowerCase() === 'repair' || id.startsWith('MR') || payload.onsite_notice === true;
+}
+
+async function sendRepairJSONP(body){
+  const payload = body?.payload || {};
+  const data = await fetchGasJSONP(body?.action || 'upsert', {
+    table: 'tasks',
+    payload: JSON.stringify(payload)
+  });
+  if(!data || data.ok === false) throw new Error(data?.error || '維修同步失敗');
+  return data;
 }
 
 // ── 統一 API 呼叫函式 ───────────────────────
 // GET:  apiRequest('GET')  → 呼叫 ?action=getAll
 // POST: apiRequest('POST', {action,table,payload})
 async function apiRequest(method='GET', body=null){
-  if(!HAS_GAS_WEB_APP || (GAS_REPAIR_TABLE_ONLY && method !== 'GET' && body?.table && body.table !== 'tasks')){
+  if(!HAS_GAS_WEB_APP || (GAS_REPAIR_TABLE_ONLY && method !== 'GET' && !isRepairSyncBody(body))){
     await sleep(120);
     return { ok:true, local:true, body };
   }
-  if(method !== 'GET' && body?.table === 'tasks' && sendGasBeacon(body)){
-    return { ok:true, beacon:true, body };
+  if(method !== 'GET' && isRepairSyncBody(body)){
+    return sendRepairJSONP(body);
   }
   try{
     showLoading();

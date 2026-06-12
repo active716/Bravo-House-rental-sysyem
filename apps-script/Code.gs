@@ -24,16 +24,24 @@ function doGet(e) {
     return output_({ ok: true, repairs, tasks: repairs }, params.callback);
   }
 
+  if (action === 'upsert') {
+    return handleUpsert_(requestFromParams_(params), params.callback);
+  }
+
   return output_({ ok: false, error: 'Unsupported action: ' + action }, params.callback);
 }
 
 function doPost(e) {
   const body = parseBody_(e);
+  return handleUpsert_(body);
+}
+
+function handleUpsert_(body, callback) {
   const action = body.action || 'upsert';
   const table = body.table || 'tasks';
 
   if (table !== 'tasks') {
-    return output_({ ok: true, skipped: true, reason: 'This web app only syncs repair tasks.' });
+    return output_({ ok: true, skipped: true, reason: 'This web app only syncs repair tasks.' }, callback);
   }
 
   if (action === 'upsert') {
@@ -41,13 +49,30 @@ function doPost(e) {
     lock.waitLock(10000);
     try {
       const repair = upsertRepair_(body.payload || {});
-      return output_({ ok: true, repair });
+      return output_({ ok: true, repair }, callback);
     } finally {
       lock.releaseLock();
     }
   }
 
-  return output_({ ok: false, error: 'Unsupported action: ' + action });
+  return output_({ ok: false, error: 'Unsupported action: ' + action }, callback);
+}
+
+function requestFromParams_(params) {
+  return {
+    action: params.action || 'upsert',
+    table: params.table || 'tasks',
+    payload: parsePayloadParam_(params.payload)
+  };
+}
+
+function parsePayloadParam_(payloadText) {
+  if (!payloadText) return {};
+  try {
+    return JSON.parse(payloadText);
+  } catch (err) {
+    return {};
+  }
 }
 
 function parseBody_(e) {
