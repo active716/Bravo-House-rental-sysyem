@@ -1,5 +1,6 @@
 const SPREADSHEET_ID = '1IPcwCNKbCRVz9JsvQYeYhZ4qQnEPzQZza8WE081VcJ0';
 const REPAIRS_SHEET_NAME = 'repairs';
+const GAS_VERSION = '2026-06-12-retention-v1';
 const COMPLETED_REPAIR_RETENTION_DAYS = 7;
 const REPAIR_HEADERS = [
   'id',
@@ -23,6 +24,15 @@ function doGet(e) {
   if (action === 'getAll' || action === 'getRepairs') {
     const repairs = readRepairs_();
     return output_({ ok: true, repairs, tasks: repairs }, params.callback);
+  }
+
+  if (action === 'health') {
+    return output_({
+      ok: true,
+      version: GAS_VERSION,
+      supports_get_upsert: true,
+      completed_repair_retention_days: COMPLETED_REPAIR_RETENTION_DAYS
+    }, params.callback);
   }
 
   if (action === 'upsert') {
