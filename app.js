@@ -53,7 +53,13 @@ async function sendRepairJSONP(body){
     table: 'tasks',
     payload: JSON.stringify(payload)
   });
-  if(!data || data.ok === false) throw new Error(data?.error || '維修同步失敗');
+  if(!data || data.ok === false){
+    const errorText = data?.error || '維修同步失敗';
+    if(String(errorText).includes('Unsupported action')){
+      throw new Error('維修同步後端尚未更新，請重新部署 Apps Script Web App');
+    }
+    throw new Error(errorText);
+  }
   return data;
 }
 
