@@ -1,5 +1,6 @@
 const SPREADSHEET_ID = '1IPcwCNKbCRVz9JsvQYeYhZ4qQnEPzQZza8WE081VcJ0';
 const REPAIRS_SHEET_NAME = 'repairs';
+const COMPLETED_REPAIR_RETENTION_DAYS = 7;
 const REPAIR_HEADERS = [
   'id',
   'task_type',
@@ -117,6 +118,7 @@ function getRepairsSheet_() {
 
 function readRepairs_() {
   const sheet = getRepairsSheet_();
+  purgeExpiredCompletedRepairs_(sheet);
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
@@ -139,6 +141,7 @@ function rowToRepair_(row) {
 
 function upsertRepair_(payload) {
   const sheet = getRepairsSheet_();
+  purgeExpiredCompletedRepairs_(sheet);
   const now = now_();
   const id = String(payload.task_id || payload.id || ('MR' + Date.now())).trim();
   const existing = findRepairRow_(sheet, id);
@@ -185,6 +188,58 @@ function findRepairRow_(sheet, id) {
     if (String(ids[i][0]) === id) return { row: i + 2 };
   }
   return null;
+}
+
+function purgeExpiredCompletedRepairs_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+
+  const rows = sheet.getRange(2, 1, lastRow - 1, REPAIR_HEADERS.length).getValues();
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - COMPLETED_REPAIR_RETENTION_DAYS);
+
+  let removed = 0;
+  const statusIdx = REPAIR_HEADERS.indexOf('status');
+  const taskTypeIdx = REPAIR_HEADERS.indexOf('task_type');
+  const completedIdx = REPAIR_HEADERS.indexOf('completed_at');
+  const updatedIdx = REPAIR_HEADERS.indexOf('updated_at');
+  const createdIdx = REPAIR_HEADERS.indexOf('created_at');
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const taskType = String(row[taskTypeIdx] || '').toLowerCase();
+    const status = normalizeStatus_(row[statusIdx]);
+    if (taskType !== 'repair' || status !== 'done') continue;
+
+    const completedDate = parseRepairDate_(row[completedIdx] || row[updatedIdx] || row[createdIdx]);
+    if (completedDate && completedDate < cutoff) {
+      sheet.deleteRow(i + 2);
+      removed++;
+    }
+  }
+
+  return removed;
+}
+
+function parseRepairDate_(value) {
+  if (!value) return null;
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    const dateValue = new Date(value.getTime());
+    dateValue.setHours(0, 0, 0, 0);
+    return dateValue;
+  }
+
+  const text = String(value).trim();
+  const dateMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (dateMatch) {
+    return new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]));
+  }
+
+  const parsed = new Date(text);
+  if (isNaN(parsed.getTime())) return null;
+  parsed.setHours(0, 0, 0, 0);
+  return parsed;
 }
 
 function normalizeStatus_(status) {

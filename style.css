@@ -208,6 +208,7 @@ body{font-family:var(--font-sans);background:var(--gray-100);color:var(--gray-80
 .repair-form textarea{resize:vertical;min-height:92px;line-height:1.5}
 .repair-form-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:2px}
 .repair-form-note{font-size:.76rem;color:var(--gray-500);line-height:1.5}
+.repair-retention-note{font-size:.76rem;color:var(--gray-500);line-height:1.45}
 .repair-notice-card .card-body{padding:0}
 .onsite-notice-list{padding:10px 18px 14px;display:flex;flex-direction:column;gap:8px}
 .onsite-notice-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--gray-100)}
