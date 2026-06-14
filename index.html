@@ -10,7 +10,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=609">
+  <link rel="stylesheet" href="style.css?v=610">
 </head>
 
 <body>
@@ -531,7 +531,7 @@
                 <textarea id="rf_desc" rows="3" placeholder="請輸入現場需要知道的狀況，例如：浴室水龍頭漏水、冷氣開機後不冷、門鎖卡住。" required></textarea>
               </div>
               <div class="repair-form-actions">
-                <span class="repair-form-note">新增後會出現在現場人員通知清單，狀態預設為未完成。</span>
+                <span class="repair-form-note">新增後會先保留在本機並背景同步，狀態預設為未完成。</span>
                 <button type="submit" class="btn btn-primary">新增並通知現場</button>
               </div>
             </form>
@@ -554,7 +554,7 @@
               <option value="done">完成</option>
             </select>
           </div>
-          <span class="repair-retention-note">完成紀錄會保留 7 天，之後自動從雲端清除。</span>
+          <span class="repair-retention-note">手機新增會先顯示再背景同步；完成紀錄保留 7 天後自動清除。</span>
         </div>
 
         <div class="repair-cards" id="repairCards"></div>
@@ -668,7 +668,7 @@
   </div><!-- /mainApp -->
 
   <script src="data.js"></script>
-  <script src="app.js?v=609"></script>
+  <script src="app.js?v=610"></script>
 
   <!-- ===== Modal：新增房客 ===== -->
   <div class="modal-overlay" id="modalTenant" style="display:none">

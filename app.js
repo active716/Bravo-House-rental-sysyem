@@ -10,7 +10,9 @@ const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwDzpxuTFkUdQxz
 const HAS_GAS_WEB_APP = !GAS_WEB_APP_URL.includes('YOUR_SCRIPT_ID');
 const GAS_REPAIR_TABLE_ONLY = true;
 const LOCAL_STATE_KEY = 'rental_demo_state_v2';
+const REPAIR_SYNC_QUEUE_KEY = 'repair_sync_queue_v1';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+let repairSyncInFlight = false;
 
 function fetchGasJSONP(action='getAll', params={}){
   if(!HAS_GAS_WEB_APP) return Promise.resolve({ ok:false, local:true });
@@ -63,6 +65,197 @@ async function sendRepairJSONP(body){
   return data;
 }
 
+function postRepairViaForm(body){
+  if(!HAS_GAS_WEB_APP) return Promise.resolve({ ok:true, local:true });
+  return new Promise((resolve, reject)=>{
+    const frameName = 'repair_sync_frame_' + Date.now() + '_' + Math.floor(Math.random()*10000);
+    const iframe = document.createElement('iframe');
+    const form = document.createElement('form');
+    let done = false;
+    let submitted = false;
+    const cleanup = () => {
+      setTimeout(()=>{
+        if(form.parentNode) form.parentNode.removeChild(form);
+        if(iframe.parentNode) iframe.parentNode.removeChild(iframe);
+      }, 200);
+    };
+    const timer = setTimeout(()=>{
+      if(done) return;
+      done = true;
+      cleanup();
+      reject(new Error('背景同步送出逾時'));
+    }, 15000);
+    iframe.name = frameName;
+    iframe.style.display = 'none';
+    iframe.onload = () => {
+      if(!submitted) return;
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      cleanup();
+      resolve({ ok:true, formPost:true });
+    };
+    form.method = 'POST';
+    form.action = GAS_WEB_APP_URL;
+    form.target = frameName;
+    form.style.display = 'none';
+    const fields = {
+      action: body?.action || 'upsert',
+      table: body?.table || 'tasks',
+      payload: JSON.stringify(body?.payload || {})
+    };
+    Object.entries(fields).forEach(([name, value])=>{
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    });
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    submitted = true;
+    form.submit();
+  });
+}
+
+function readRepairSyncQueue(){
+  try{
+    const rows = JSON.parse(localStorage.getItem(REPAIR_SYNC_QUEUE_KEY) || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch(err) {
+    return [];
+  }
+}
+
+function saveRepairSyncQueue(queue){
+  try{
+    localStorage.setItem(REPAIR_SYNC_QUEUE_KEY, JSON.stringify(queue.slice(-80)));
+  } catch(err) {
+    console.warn('saveRepairSyncQueue failed:', err);
+  }
+}
+
+function repairSyncSignature(body){
+  const payload = body?.payload || {};
+  return JSON.stringify({
+    action: body?.action || 'upsert',
+    table: body?.table || 'tasks',
+    task_id: payload.task_id || payload.id || '',
+    status: payload.status || '',
+    updated_at: payload.updated_at || '',
+    completed_at: payload.completed_at || '',
+    room_id: payload.room_id || '',
+    category: payload.category || '',
+    desc: payload.desc || payload.note || ''
+  });
+}
+
+function repairIdFromBody(body){
+  const payload = body?.payload || {};
+  return String(payload.task_id || payload.id || '').trim();
+}
+
+function queueRepairSync(body){
+  if(!HAS_GAS_WEB_APP || !isRepairSyncBody(body)) return { ok:true, local:true };
+  const queue = readRepairSyncQueue();
+  const signature = repairSyncSignature(body);
+  if(!queue.some(job=>job.signature === signature)){
+    queue.push({
+      id: 'RS' + Date.now() + '_' + Math.floor(Math.random()*10000),
+      signature,
+      body,
+      attempts: 0,
+      created_at: new Date().toISOString()
+    });
+    saveRepairSyncQueue(queue);
+  }
+  scheduleRepairSyncQueue();
+  return { ok:true, queued:true, body };
+}
+
+function setLocalRepairSyncState(body, state, error=''){
+  const id = repairIdFromBody(body);
+  if(!id) return;
+  const item = repairsData.find(r=>r.id===id || r.task_id===id);
+  if(item){
+    item.sync_status = state;
+    item.sync_error = error;
+    saveLocalState();
+    renderRepairs($('repairStatusFilter')?.value || 'all');
+    renderDashboard();
+  }
+}
+
+function scheduleRepairSyncQueue(delays=[900, 5000, 15000]){
+  if(!HAS_GAS_WEB_APP) return;
+  delays.forEach(delay=>setTimeout(()=>processRepairSyncQueue({silent:true}), delay));
+}
+
+function scheduleRepairCloudRefresh(delays=[2500, 7000, 16000]){
+  if(!HAS_GAS_WEB_APP) return;
+  delays.forEach(delay=>setTimeout(()=>loadCloudRepairs({silent:true, preservePending:true}), delay));
+}
+
+async function verifyRepairCloudState(body){
+  const id = repairIdFromBody(body);
+  if(!id) return true;
+  const payload = body?.payload || {};
+  const data = await fetchGasJSONP('getRepairs');
+  const rows = data.repairs || (data.tasks || []).filter(t=>String(t.task_type || '').toLowerCase() === 'repair');
+  const item = rows.map(normalizeRepairRecord).find(r=>r.id===id);
+  if(!item) return false;
+  if(payload.status){
+    return repairStatusKey(item) === (String(payload.status).toLowerCase() === 'done' ? 'done' : 'pending');
+  }
+  return true;
+}
+
+async function sendRepairWithFallback(body){
+  try{
+    return await sendRepairJSONP(body);
+  } catch(jsonpErr) {
+    console.warn('repair JSONP sync failed, fallback to form POST:', jsonpErr);
+    await postRepairViaForm(body);
+    await sleep(1800);
+    const verified = await verifyRepairCloudState(body);
+    if(!verified) throw new Error('背景同步尚未確認，稍後會自動重試');
+    return { ok:true, formPost:true, verified:true };
+  }
+}
+
+async function processRepairSyncQueue(options={}){
+  if(!HAS_GAS_WEB_APP || repairSyncInFlight) return false;
+  let queue = readRepairSyncQueue();
+  if(!queue.length) return true;
+  repairSyncInFlight = true;
+  const nextQueue = [];
+  let hadSuccess = false;
+  try{
+    for(const job of queue){
+      try{
+        await sendRepairWithFallback(job.body);
+        setLocalRepairSyncState(job.body, 'synced');
+        hadSuccess = true;
+      } catch(err) {
+        job.attempts = (Number(job.attempts) || 0) + 1;
+        job.last_error = err.message || String(err);
+        job.last_attempt_at = new Date().toISOString();
+        nextQueue.push(job);
+        setLocalRepairSyncState(job.body, job.attempts >= 4 ? 'error' : 'pending', job.last_error);
+      }
+    }
+    saveRepairSyncQueue(nextQueue);
+    if(hadSuccess) scheduleRepairCloudRefresh();
+    if(nextQueue.length) {
+      const delay = Math.min(90000, 8000 + Math.max(...nextQueue.map(job=>Number(job.attempts)||1)) * 6000);
+      setTimeout(()=>processRepairSyncQueue({silent:true}), delay);
+    }
+    return nextQueue.length === 0;
+  } finally {
+    repairSyncInFlight = false;
+  }
+}
+
 // ── 統一 API 呼叫函式 ───────────────────────
 // GET:  apiRequest('GET')  → 呼叫 ?action=getAll
 // POST: apiRequest('POST', {action,table,payload})
@@ -72,7 +265,7 @@ async function apiRequest(method='GET', body=null){
     return { ok:true, local:true, body };
   }
   if(method !== 'GET' && isRepairSyncBody(body)){
-    return sendRepairJSONP(body);
+    return queueRepairSync(body);
   }
   try{
     showLoading();
@@ -437,6 +630,8 @@ function markLocalRepairStatus(id, status){
     item.status = status;
     item.updated_at = new Date().toISOString().slice(0,10);
     item.completed_at = status === 'done' ? item.updated_at : '';
+    item.sync_status = HAS_GAS_WEB_APP ? 'pending' : 'local';
+    item.sync_error = '';
   }
   saveLocalState();
 }
@@ -469,9 +664,16 @@ function normalizeRepairRecord(row){
 }
 
 function applyCloudRepairs(rows){
-  repairsData = (rows || [])
+  const pendingLocal = repairsData.filter(r=>r.sync_status === 'pending' || r.sync_status === 'error');
+  const pendingById = new Map(pendingLocal.map(r=>[r.id, r]));
+  const cloudRepairs = (rows || [])
     .map(normalizeRepairRecord)
     .filter(r=>r.id && r.task_type === 'repair');
+  const cloudIds = new Set(cloudRepairs.map(r=>r.id));
+  repairsData = [
+    ...pendingLocal.filter(r=>!cloudIds.has(r.id)),
+    ...cloudRepairs.map(r=>pendingById.get(r.id) || r)
+  ];
   saveLocalState();
 }
 
@@ -512,7 +714,11 @@ function addLocalRepair(payload){
     updated_at: today,
     onsite_notice: true
   };
-  repairsData.unshift(item);
+  item.sync_status = HAS_GAS_WEB_APP ? 'pending' : 'local';
+  item.sync_error = '';
+  const existingIdx = repairsData.findIndex(r=>r.id===id || r.task_id===id);
+  if(existingIdx >= 0) repairsData[existingIdx] = {...repairsData[existingIdx], ...item};
+  else repairsData.unshift(item);
   logsData.unshift({
     color: 'orange',
     text: '新增維修通知：' + item.room_id + '｜' + item.category,
@@ -800,10 +1006,15 @@ function renderRepairs(statusFilter='all'){
   $('repairCards').innerHTML=list.length ? list.map(r=>{
     const key=repairStatusKey(r);
     const badge=key==='done'?'badge-success':'badge-danger';
+    const syncBadge = r.sync_status === 'pending'
+      ? '<span class="badge badge-warn" style="margin-left:4px" title="正在背景同步">同步中</span>'
+      : r.sync_status === 'error'
+        ? '<span class="badge badge-danger" style="margin-left:4px" title="'+escapeHtml(r.sync_error || '稍後會自動重試')+'">待重試</span>'
+        : '';
     const actions = key==='done'
       ? '<button class="btn btn-sm btn-ghost" data-action="setRepairStatus" data-id="'+escapeHtml(r.id)+'" data-status="pending">重開未完成</button>'
       : '<button class="btn btn-sm btn-success" data-action="setRepairStatus" data-id="'+escapeHtml(r.id)+'" data-status="done">標記完成</button>';
-    return '<div class="repair-card status-'+key+'"><div class="repair-card-header"><div><div class="repair-room">'+escapeHtml(r.room_id)+'</div><span class="badge badge-info" style="margin-top:4px">'+escapeHtml(r.category)+'</span></div><div style="text-align:right"><span class="badge '+badge+'">'+repairStatusText(r)+'</span><div class="repair-date" style="margin-top:4px">'+escapeHtml(repairDate(r))+'</div></div></div><div class="repair-desc">'+escapeHtml(r.desc)+'</div><div class="repair-footer"><span class="repair-reporter">登錄人：'+escapeHtml(r.reporter||'客服人員')+'</span><div class="repair-actions">'+actions+'</div></div></div>';
+    return '<div class="repair-card status-'+key+'"><div class="repair-card-header"><div><div class="repair-room">'+escapeHtml(r.room_id)+'</div><span class="badge badge-info" style="margin-top:4px">'+escapeHtml(r.category)+'</span></div><div style="text-align:right"><span class="badge '+badge+'">'+repairStatusText(r)+'</span>'+syncBadge+'<div class="repair-date" style="margin-top:4px">'+escapeHtml(repairDate(r))+'</div></div></div><div class="repair-desc">'+escapeHtml(r.desc)+'</div><div class="repair-footer"><span class="repair-reporter">登錄人：'+escapeHtml(r.reporter||'客服人員')+'</span><div class="repair-actions">'+actions+'</div></div></div>';
   }).join('') : '<div class="empty-state">目前沒有符合條件的維修紀錄</div>';
 }
 $('repairStatusFilter').addEventListener('change',()=>renderRepairs($('repairStatusFilter').value));
@@ -1232,6 +1443,9 @@ function init(){
   renderReports();
   renderAvailable();
   initCRUD();
+  if(HAS_GAS_WEB_APP) {
+    scheduleRepairSyncQueue([1200, 6000, 20000]);
+  }
 }
 
 if(document.readyState === 'loading'){
@@ -1397,16 +1611,15 @@ function initCRUD(){
       showToast('請選擇房號、問題類型並輸入故障敘述','error');
       return;
     }
-    try{
-      await apiRequest('POST',{action:'upsert',table:'tasks',payload});
-      addLocalRepair(payload);
-      repairForm.reset();
-      $('rf_reporter').value = '客服人員';
-      showToast('維修紀錄已新增，已通知現場人員 ✅');
-      renderRepairs($('repairStatusFilter').value);
-      renderDashboard();
-      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 1800);
-    } catch(err){ showToast('新增失敗：'+err.message,'error'); }
+    addLocalRepair(payload);
+    repairForm.reset();
+    $('rf_reporter').value = '客服人員';
+    showToast(HAS_GAS_WEB_APP ? '維修已先新增，正在背景同步' : '維修紀錄已新增');
+    renderRepairs($('repairStatusFilter').value);
+    renderDashboard();
+    apiRequest('POST',{action:'upsert',table:'tasks',payload})
+      .then(()=>scheduleRepairCloudRefresh())
+      .catch(err=>showToast('已保留在本機，雲端稍後重試：'+err.message,'error'));
   };
 
   // ── 報修狀態切換 ─────────────────────────────────────
@@ -1415,15 +1628,15 @@ function initCRUD(){
     if(!btn) return;
     const id = btn.dataset.id;
     const status = btn.dataset.status;
-    try{
-      const today = new Date().toISOString().slice(0,10);
-      await apiRequest('POST',{action:'upsert',table:'tasks',payload:{task_id:id, status, updated_at:today, completed_at:status==='done'?today:''}});
-      markLocalRepairStatus(id, status);
-      showToast('報修狀態已更新 ✅');
-      renderRepairs($('repairStatusFilter').value);
-      renderDashboard();
-      if(HAS_GAS_WEB_APP) setTimeout(()=>loadCloudRepairs({silent:true}), 1800);
-    } catch(err){ showToast('操作失敗：'+err.message,'error'); }
+    const today = new Date().toISOString().slice(0,10);
+    const payload = {task_id:id, status, updated_at:today, completed_at:status==='done'?today:''};
+    markLocalRepairStatus(id, status);
+    showToast(HAS_GAS_WEB_APP ? '狀態已先更新，正在背景同步' : '報修狀態已更新');
+    renderRepairs($('repairStatusFilter').value);
+    renderDashboard();
+    apiRequest('POST',{action:'upsert',table:'tasks',payload})
+      .then(()=>scheduleRepairCloudRefresh())
+      .catch(err=>showToast('已保留在本機，雲端稍後重試：'+err.message,'error'));
   });
 
   // ── 關閉 Modal ────────────────────────────────────────

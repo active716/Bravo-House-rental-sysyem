@@ -1,6 +1,6 @@
 const SPREADSHEET_ID = '1IPcwCNKbCRVz9JsvQYeYhZ4qQnEPzQZza8WE081VcJ0';
 const REPAIRS_SHEET_NAME = 'repairs';
-const GAS_VERSION = '2026-06-12-retention-v1';
+const GAS_VERSION = '2026-06-14-mobile-queue-v1';
 const COMPLETED_REPAIR_RETENTION_DAYS = 7;
 const REPAIR_HEADERS = [
   'id',
@@ -31,6 +31,7 @@ function doGet(e) {
       ok: true,
       version: GAS_VERSION,
       supports_get_upsert: true,
+      supports_form_post: true,
       completed_repair_retention_days: COMPLETED_REPAIR_RETENTION_DAYS
     }, params.callback);
   }
@@ -87,6 +88,9 @@ function parsePayloadParam_(payloadText) {
 }
 
 function parseBody_(e) {
+  if (e && e.parameter && (e.parameter.action || e.parameter.table || e.parameter.payload)) {
+    return requestFromParams_(e.parameter);
+  }
   if (!e || !e.postData || !e.postData.contents) return {};
   try {
     return JSON.parse(e.postData.contents);
