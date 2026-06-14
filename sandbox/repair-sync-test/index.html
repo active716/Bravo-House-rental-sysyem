@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>維修同步 Sandbox 測試頁</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f4f6f8}
+    *{box-sizing:border-box}
+    body{margin:0;padding:18px}
+    main{max-width:880px;margin:0 auto;display:grid;gap:14px}
+    section{background:#fff;border:1px solid #dfe4ea;border-radius:8px;padding:16px;box-shadow:0 1px 4px rgba(15,23,42,.06)}
+    h1{font-size:1.3rem;margin:0 0 4px}
+    h2{font-size:1rem;margin:0 0 10px}
+    p{margin:4px 0;color:#5b6675;font-size:.9rem;line-height:1.5}
+    label{display:block;font-size:.78rem;font-weight:700;color:#3b4656;margin:10px 0 4px}
+    input,select,textarea{width:100%;border:1px solid #cfd7e2;border-radius:6px;padding:10px;font:inherit;background:#fff}
+    textarea{min-height:92px;resize:vertical}
+    button{border:0;border-radius:6px;padding:10px 12px;font-weight:800;cursor:pointer;background:#1d4ed8;color:#fff}
+    button.secondary{background:#eef2ff;color:#1e3a8a}
+    button.warn{background:#f59e0b;color:#111827}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .status{font-size:.82rem;padding:10px;border-radius:6px;background:#f8fafc;border:1px solid #e2e8f0;white-space:pre-wrap}
+    .ok{color:#047857}.bad{color:#b91c1c}.muted{color:#64748b}
+    .cards{display:grid;gap:8px}
+    .card{border:1px solid #e2e8f0;border-radius:7px;padding:10px;background:#fbfdff}
+    .card strong{display:block;margin-bottom:4px}
+    .badge{display:inline-block;border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:800;margin-left:4px}
+    .pending{background:#fef3c7;color:#92400e}.synced{background:#dcfce7;color:#166534}.done{background:#e0f2fe;color:#075985}
+    @media(max-width:640px){body{padding:10px}.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>維修同步 Sandbox 測試頁</h1>
+    <p>這頁只測試 sandbox Apps Script 與 sandbox Google Sheet，不會碰正式維修資料。</p>
+    <p>Sandbox Sheet：<a href="https://docs.google.com/spreadsheets/d/1PuYj0_e1wGYfCkC6Z3mKRMChF6CN3oXVfOqARAAFSCc/edit" target="_blank" rel="noreferrer">Bravo House 維修同步自動部署測試_SANDBOX_20260614</a></p>
+  </section>
+
+  <section>
+    <h2>1. 貼上 Sandbox Web App URL</h2>
+    <label for="gasUrl">Apps Script Web App URL</label>
+    <input id="gasUrl" placeholder="https://script.google.com/macros/s/.../exec">
+    <div class="actions">
+      <button id="saveUrlBtn">儲存 URL</button>
+      <button class="secondary" id="healthBtn">檢查 health</button>
+      <button class="secondary" id="loadBtn">讀取雲端資料</button>
+    </div>
+    <div class="status" id="healthStatus">尚未檢查。</div>
+  </section>
+
+  <section>
+    <h2>2. 新增測試維修</h2>
+    <form id="repairForm">
+      <div class="grid">
+        <div>
+          <label for="room">房號</label>
+          <input id="room" value="SANDBOX-101" required>
+        </div>
+        <div>
+          <label for="category">問題類型</label>
+          <select id="category">
+            <option>水電問題</option>
+            <option>冷氣問題</option>
+            <option>門鎖鑰匙</option>
+            <option>其他問題</option>
+          </select>
+        </div>
+      </div>
+      <label for="desc">故障敘述</label>
+      <textarea id="desc" required>手機同步 sandbox 測試</textarea>
+      <div class="actions">
+        <button type="submit">新增並背景同步</button>
+        <button type="button" class="warn" id="oldDoneBtn">新增舊完成測試並驗證自動清除</button>
+      </div>
+    </form>
+  </section>
+
+  <section>
+    <h2>3. 測試結果</h2>
+    <div class="status" id="syncStatus">等待操作。</div>
+    <div class="cards" id="cards"></div>
+  </section>
+</main>
+
+<script>
+const URL_KEY = 'sandbox_gas_url_v1';
+const QUEUE_KEY = 'sandbox_repair_queue_v1';
+let localRepairs = [];
+let syncing = false;
+
+const $ = id => document.getElementById(id);
+const nowText = () => new Date().toISOString().slice(0,19).replace('T',' ');
+const escapeHtml = text => String(text ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+function getGasUrl(){
+  return $('gasUrl').value.trim().replace(/\/$/, '');
+}
+
+function setStatus(text, cls=''){
+  $('syncStatus').className = 'status ' + cls;
+  $('syncStatus').textContent = text;
+}
+
+function readQueue(){
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]') || []; }
+  catch { return []; }
+}
+
+function saveQueue(queue){
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue.slice(-30)));
+}
+
+function render(){
+  const queue = readQueue();
+  $('cards').innerHTML = localRepairs.length ? localRepairs.map(item => {
+    const queued = queue.some(job => (job.payload.task_id || job.payload.id) === item.id);
+    const statusClass = item.status === 'done' ? 'done' : queued ? 'pending' : 'synced';
+    const statusText = item.status === 'done' ? '完成' : queued ? '同步中' : '已同步';
+    return `<div class="card"><strong>${escapeHtml(item.room_id)} <span class="badge ${statusClass}">${statusText}</span></strong>
+      <div>${escapeHtml(item.category)}｜${escapeHtml(item.desc)}</div>
+      <div class="muted">${escapeHtml(item.id)}｜${escapeHtml(item.created_at || item.updated_at || '')}</div></div>`;
+  }).join('') : '<p class="muted">目前沒有本機資料。</p>';
+}
+
+function fetchJSONP(action, params={}){
+  const gasUrl = getGasUrl();
+  if(!gasUrl) return Promise.reject(new Error('請先貼上 Web App URL'));
+  return new Promise((resolve, reject) => {
+    const callback = 'sandboxCb_' + Date.now() + '_' + Math.floor(Math.random()*10000);
+    const query = new URLSearchParams({ action, callback, ...params });
+    const script = document.createElement('script');
+    const cleanup = () => {
+      delete window[callback];
+      if(script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timer);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('JSONP 逾時'));
+    }, 12000);
+    window[callback] = data => {
+      cleanup();
+      resolve(data);
+    };
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('JSONP 載入失敗'));
+    };
+    script.src = gasUrl + '?' + query.toString();
+    document.head.appendChild(script);
+  });
+}
+
+function postForm(payload){
+  const gasUrl = getGasUrl();
+  if(!gasUrl) return Promise.reject(new Error('請先貼上 Web App URL'));
+  return new Promise((resolve, reject) => {
+    const frameName = 'sandboxPostFrame_' + Date.now();
+    const iframe = document.createElement('iframe');
+    const form = document.createElement('form');
+    let submitted = false;
+    let done = false;
+    const cleanup = () => setTimeout(() => {
+      iframe.remove();
+      form.remove();
+    }, 200);
+    const timer = setTimeout(() => {
+      if(done) return;
+      done = true;
+      cleanup();
+      reject(new Error('表單 POST 逾時'));
+    }, 15000);
+    iframe.name = frameName;
+    iframe.style.display = 'none';
+    iframe.onload = () => {
+      if(!submitted || done) return;
+      done = true;
+      clearTimeout(timer);
+      cleanup();
+      resolve({ok:true, formPost:true});
+    };
+    form.method = 'POST';
+    form.action = gasUrl;
+    form.target = frameName;
+    form.style.display = 'none';
+    [['action','upsert'], ['table','tasks'], ['payload', JSON.stringify(payload)]].forEach(([name,value]) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    });
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    submitted = true;
+    form.submit();
+  });
+}
+
+function queueRepair(payload){
+  const queue = readQueue();
+  if(!queue.some(job => job.payload.task_id === payload.task_id)) {
+    queue.push({payload, attempts:0});
+    saveQueue(queue);
+  }
+  processQueue();
+}
+
+async function sendRepair(payload){
+  try {
+    const data = await fetchJSONP('upsert', {table:'tasks', payload: JSON.stringify(payload)});
+    if(!data || data.ok === false) throw new Error(data?.error || 'JSONP 寫入失敗');
+    return data;
+  } catch (err) {
+    await postForm(payload);
+    return {ok:true, formPost:true};
+  }
+}
+
+async function processQueue(){
+  if(syncing) return;
+  syncing = true;
+  const queue = readQueue();
+  const remaining = [];
+  try {
+    for(const job of queue) {
+      try {
+        setStatus('背景同步中：' + job.payload.task_id);
+        await sendRepair(job.payload);
+      } catch (err) {
+        job.attempts = (job.attempts || 0) + 1;
+        job.last_error = err.message;
+        remaining.push(job);
+      }
+    }
+    saveQueue(remaining);
+    render();
+    if(remaining.length) {
+      setStatus('仍有 ' + remaining.length + ' 筆待重試，稍後會再送。', 'bad');
+      setTimeout(processQueue, 8000);
+    } else {
+      setStatus('佇列已清空，等待雲端回讀確認。', 'ok');
+      setTimeout(loadRepairs, 2200);
+    }
+  } finally {
+    syncing = false;
+  }
+}
+
+async function loadRepairs(){
+  const data = await fetchJSONP('getRepairs');
+  if(!data || data.ok === false) throw new Error(data?.error || '讀取失敗');
+  localRepairs = data.repairs || [];
+  render();
+  setStatus('已讀取雲端資料，共 ' + localRepairs.length + ' 筆。', 'ok');
+}
+
+$('saveUrlBtn').onclick = () => {
+  localStorage.setItem(URL_KEY, getGasUrl());
+  $('healthStatus').textContent = 'URL 已儲存。';
+};
+
+$('healthBtn').onclick = async () => {
+  try {
+    const data = await fetchJSONP('health');
+    $('healthStatus').className = 'status ok';
+    $('healthStatus').textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    $('healthStatus').className = 'status bad';
+    $('healthStatus').textContent = err.message;
+  }
+};
+
+$('loadBtn').onclick = () => loadRepairs().catch(err => setStatus(err.message, 'bad'));
+
+$('repairForm').onsubmit = e => {
+  e.preventDefault();
+  const payload = {
+    task_id: 'SB' + Date.now(),
+    task_type: 'repair',
+    room_id: $('room').value.trim(),
+    category: $('category').value,
+    desc: $('desc').value.trim(),
+    reporter: 'sandbox tester',
+    status: 'pending',
+    created_at: nowText(),
+    updated_at: nowText(),
+    completed_at: '',
+    onsite_notice: true,
+    source: 'sandbox_test_page'
+  };
+  localRepairs.unshift({...payload, id: payload.task_id});
+  render();
+  setStatus('已先顯示在本機，開始背景同步。');
+  queueRepair(payload);
+};
+
+$('oldDoneBtn').onclick = () => {
+  const payload = {
+    task_id: 'SB_OLD_DONE_' + Date.now(),
+    task_type: 'repair',
+    room_id: 'SANDBOX-OLD',
+    category: '自動清除測試',
+    desc: '這筆故意設成 2020-01-01 完成，讀取時應被清除。',
+    reporter: 'sandbox tester',
+    status: 'done',
+    created_at: '2020-01-01',
+    updated_at: '2020-01-01',
+    completed_at: '2020-01-01',
+    onsite_notice: true,
+    source: 'sandbox_test_page'
+  };
+  localRepairs.unshift({...payload, id: payload.task_id});
+  render();
+  setStatus('已新增舊完成測試，背景同步後讀取應自動消失。');
+  queueRepair(payload);
+};
+
+$('gasUrl').value = localStorage.getItem(URL_KEY) || '';
+render();
+processQueue();
+</script>
+</body>
+</html>

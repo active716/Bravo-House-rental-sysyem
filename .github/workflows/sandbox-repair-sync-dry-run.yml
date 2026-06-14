@@ -1,0 +1,30 @@
+name: Sandbox Repair Sync Dry Run
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "sandbox/repair-sync-test/**"
+      - ".github/workflows/sandbox-repair-sync-dry-run.yml"
+
+jobs:
+  validate-sandbox:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate sandbox package
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\sandbox\repair-sync-test\scripts\check-sandbox-package.ps1
+
+      - name: Parse Apps Script syntax
+        shell: pwsh
+        run: |
+          node -e "const fs=require('fs'); new Function(fs.readFileSync('sandbox/repair-sync-test/Code.gs','utf8')); console.log('Apps Script syntax ok')"
+
+      - name: Parse test page syntax
+        shell: pwsh
+        run: |
+          node -e "const fs=require('fs'); const html=fs.readFileSync('sandbox/repair-sync-test/index.html','utf8'); const scripts=[...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map(m=>m[1]); scripts.forEach((code,i)=>new Function(code)); console.log('HTML scripts syntax ok:', scripts.length)"
