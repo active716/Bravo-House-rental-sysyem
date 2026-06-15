@@ -30,12 +30,24 @@ if ($html -match [regex]::Escape($productionSheetId)) {
   throw "Sandbox index.html references the production sheet id. Refusing to pass."
 }
 
-if ($code -notmatch 'sandbox-2026-06-14-mobile-sync-v1') {
+if ($code -notmatch 'sandbox-2026-06-15-compatible-v1') {
   throw "Sandbox version marker is missing."
 }
 
 if ($code -notmatch 'supports_form_post') {
   throw "Form POST health marker is missing."
+}
+
+if ($code -match '=>') {
+  throw "Code.gs contains arrow functions. Use Apps Script compatible function syntax."
+}
+
+if ($code -match '\.\.\.') {
+  throw "Code.gs contains spread syntax. Use Apps Script compatible object assignment."
+}
+
+if ($code -match '\b(const|let)\b') {
+  throw "Code.gs contains const/let. Use var for maximum Apps Script compatibility."
 }
 
 $null = $manifest | ConvertFrom-Json
@@ -57,6 +69,6 @@ if ($counts.HtmlOpenScript -ne $counts.HtmlCloseScript) { throw "HTML script tag
   ok = $true
   sandboxSheetId = $sandboxSheetId
   productionSheetReferenced = $false
-  version = 'sandbox-2026-06-14-mobile-sync-v1'
+  version = 'sandbox-2026-06-15-compatible-v1'
   checks = $counts
 } | ConvertTo-Json -Depth 4

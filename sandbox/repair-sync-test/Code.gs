@@ -1,8 +1,8 @@
-const SANDBOX_SPREADSHEET_ID = '1PuYj0_e1wGYfCkC6Z3mKRMChF6CN3oXVfOqARAAFSCc';
-const SANDBOX_SHEET_NAME = 'repairs_sandbox';
-const SANDBOX_VERSION = 'sandbox-2026-06-14-mobile-sync-v1';
-const COMPLETED_REPAIR_RETENTION_DAYS = 7;
-const REPAIR_HEADERS = [
+var SANDBOX_SPREADSHEET_ID = '1PuYj0_e1wGYfCkC6Z3mKRMChF6CN3oXVfOqARAAFSCc';
+var SANDBOX_SHEET_NAME = 'repairs_sandbox';
+var SANDBOX_VERSION = 'sandbox-2026-06-15-compatible-v1';
+var COMPLETED_REPAIR_RETENTION_DAYS = 7;
+var REPAIR_HEADERS = [
   'id',
   'task_type',
   'room_id',
@@ -18,8 +18,8 @@ const REPAIR_HEADERS = [
 ];
 
 function doGet(e) {
-  const params = e && e.parameter ? e.parameter : {};
-  const action = params.action || 'health';
+  var params = e && e.parameter ? e.parameter : {};
+  var action = params.action || 'health';
 
   if (action === 'health') {
     return output_({
@@ -35,8 +35,8 @@ function doGet(e) {
   }
 
   if (action === 'getRepairs') {
-    const repairs = readRepairs_();
-    return output_({ ok: true, sandbox: true, repairs, tasks: repairs }, params.callback);
+    var repairs = readRepairs_();
+    return output_({ ok: true, sandbox: true, repairs: repairs, tasks: repairs }, params.callback);
   }
 
   if (action === 'upsert') {
@@ -51,19 +51,20 @@ function doPost(e) {
 }
 
 function handleUpsert_(body, callback) {
-  const action = body.action || 'upsert';
-  const table = body.table || 'tasks';
+  body = body || {};
+  var action = body.action || 'upsert';
+  var table = body.table || 'tasks';
 
   if (table !== 'tasks') {
     return output_({ ok: true, sandbox: true, skipped: true, reason: 'Sandbox only syncs repair tasks.' }, callback);
   }
 
   if (action === 'upsert') {
-    const lock = LockService.getScriptLock();
+    var lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
-      const repair = upsertRepair_(body.payload || {});
-      return output_({ ok: true, sandbox: true, repair }, callback);
+      var repair = upsertRepair_(body.payload || {});
+      return output_({ ok: true, sandbox: true, repair: repair }, callback);
     } finally {
       lock.releaseLock();
     }
@@ -102,7 +103,7 @@ function parseBody_(e) {
 }
 
 function output_(data, callback) {
-  const json = JSON.stringify(data);
+  var json = JSON.stringify(data);
   if (callback) {
     return ContentService
       .createTextOutput(callback + '(' + json + ')')
@@ -114,13 +115,15 @@ function output_(data, callback) {
 }
 
 function getRepairsSheet_() {
-  const ss = SpreadsheetApp.openById(SANDBOX_SPREADSHEET_ID);
-  let sheet = ss.getSheetByName(SANDBOX_SHEET_NAME);
+  var ss = SpreadsheetApp.openById(SANDBOX_SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(SANDBOX_SHEET_NAME);
   if (!sheet) sheet = ss.insertSheet(SANDBOX_SHEET_NAME);
 
-  const headerRange = sheet.getRange(1, 1, 1, REPAIR_HEADERS.length);
-  const currentHeaders = headerRange.getValues()[0];
-  const needsHeaders = REPAIR_HEADERS.some((header, idx) => currentHeaders[idx] !== header);
+  var headerRange = sheet.getRange(1, 1, 1, REPAIR_HEADERS.length);
+  var currentHeaders = headerRange.getValues()[0];
+  var needsHeaders = REPAIR_HEADERS.some(function(header, idx) {
+    return currentHeaders[idx] !== header;
+  });
 
   if (needsHeaders) {
     headerRange.setValues([REPAIR_HEADERS]);
@@ -133,20 +136,24 @@ function getRepairsSheet_() {
 }
 
 function readRepairs_() {
-  const sheet = getRepairsSheet_();
+  var sheet = getRepairsSheet_();
   purgeExpiredCompletedRepairs_(sheet);
-  const lastRow = sheet.getLastRow();
+  var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  const values = sheet.getRange(2, 1, lastRow - 1, REPAIR_HEADERS.length).getValues();
+  var values = sheet.getRange(2, 1, lastRow - 1, REPAIR_HEADERS.length).getValues();
   return values
-    .map(row => rowToRepair_(row))
-    .filter(item => item.id && item.task_type === 'repair');
+    .map(function(row) {
+      return rowToRepair_(row);
+    })
+    .filter(function(item) {
+      return item.id && item.task_type === 'repair';
+    });
 }
 
 function rowToRepair_(row) {
-  const item = {};
-  REPAIR_HEADERS.forEach((header, idx) => {
+  var item = {};
+  REPAIR_HEADERS.forEach(function(header, idx) {
     item[header] = row[idx] === undefined || row[idx] === null ? '' : String(row[idx]);
   });
   item.task_id = item.id;
@@ -156,19 +163,20 @@ function rowToRepair_(row) {
 }
 
 function upsertRepair_(payload) {
-  const sheet = getRepairsSheet_();
+  payload = payload || {};
+  var sheet = getRepairsSheet_();
   purgeExpiredCompletedRepairs_(sheet);
-  const now = now_();
-  const id = String(payload.task_id || payload.id || ('SB' + Date.now())).trim();
-  const existing = findRepairRow_(sheet, id);
-  const existingItem = existing ? rowToRepair_(sheet.getRange(existing.row, 1, 1, REPAIR_HEADERS.length).getValues()[0]) : {};
-  const nextStatus = normalizeStatus_(payload.status || existingItem.status || 'pending');
-  const createdAt = payload.created_at || existingItem.created_at || now;
-  const updatedAt = payload.updated_at || now;
-  const completedAt = nextStatus === 'done' ? (payload.completed_at || existingItem.completed_at || now) : '';
+  var now = now_();
+  var id = String(payload.task_id || payload.id || ('SB' + Date.now())).trim();
+  var existing = findRepairRow_(sheet, id);
+  var existingItem = existing ? rowToRepair_(sheet.getRange(existing.row, 1, 1, REPAIR_HEADERS.length).getValues()[0]) : {};
+  var nextStatus = normalizeStatus_(payload.status || existingItem.status || 'pending');
+  var createdAt = payload.created_at || existingItem.created_at || now;
+  var updatedAt = payload.updated_at || now;
+  var completedAt = nextStatus === 'done' ? (payload.completed_at || existingItem.completed_at || now) : '';
 
-  const item = {
-    id,
+  var item = {
+    id: id,
     task_type: 'repair',
     room_id: payload.room_id || existingItem.room_id || 'SANDBOX-101',
     category: payload.category || payload.title || existingItem.category || 'sandbox test',
@@ -182,53 +190,53 @@ function upsertRepair_(payload) {
     source: payload.source || existingItem.source || 'sandbox_test_page'
   };
 
-  const rowValues = REPAIR_HEADERS.map(header => item[header]);
+  var rowValues = REPAIR_HEADERS.map(function(header) {
+    return item[header];
+  });
   if (existing) {
     sheet.getRange(existing.row, 1, 1, REPAIR_HEADERS.length).setValues([rowValues]);
   } else {
     sheet.appendRow(rowValues);
   }
 
-  return {
-    ...item,
-    task_id: item.id,
-    date: item.created_at
-  };
+  item.task_id = item.id;
+  item.date = item.created_at;
+  return item;
 }
 
 function findRepairRow_(sheet, id) {
-  const lastRow = sheet.getLastRow();
+  var lastRow = sheet.getLastRow();
   if (lastRow < 2) return null;
-  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-  for (let i = 0; i < ids.length; i++) {
+  var ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
     if (String(ids[i][0]) === id) return { row: i + 2 };
   }
   return null;
 }
 
 function purgeExpiredCompletedRepairs_(sheet) {
-  const lastRow = sheet.getLastRow();
+  var lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
 
-  const rows = sheet.getRange(2, 1, lastRow - 1, REPAIR_HEADERS.length).getValues();
-  const cutoff = new Date();
+  var rows = sheet.getRange(2, 1, lastRow - 1, REPAIR_HEADERS.length).getValues();
+  var cutoff = new Date();
   cutoff.setHours(0, 0, 0, 0);
   cutoff.setDate(cutoff.getDate() - COMPLETED_REPAIR_RETENTION_DAYS);
 
-  let removed = 0;
-  const statusIdx = REPAIR_HEADERS.indexOf('status');
-  const taskTypeIdx = REPAIR_HEADERS.indexOf('task_type');
-  const completedIdx = REPAIR_HEADERS.indexOf('completed_at');
-  const updatedIdx = REPAIR_HEADERS.indexOf('updated_at');
-  const createdIdx = REPAIR_HEADERS.indexOf('created_at');
+  var removed = 0;
+  var statusIdx = REPAIR_HEADERS.indexOf('status');
+  var taskTypeIdx = REPAIR_HEADERS.indexOf('task_type');
+  var completedIdx = REPAIR_HEADERS.indexOf('completed_at');
+  var updatedIdx = REPAIR_HEADERS.indexOf('updated_at');
+  var createdIdx = REPAIR_HEADERS.indexOf('created_at');
 
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const row = rows[i];
-    const taskType = String(row[taskTypeIdx] || '').toLowerCase();
-    const status = normalizeStatus_(row[statusIdx]);
+  for (var i = rows.length - 1; i >= 0; i--) {
+    var row = rows[i];
+    var taskType = String(row[taskTypeIdx] || '').toLowerCase();
+    var status = normalizeStatus_(row[statusIdx]);
     if (taskType !== 'repair' || status !== 'done') continue;
 
-    const completedDate = parseRepairDate_(row[completedIdx] || row[updatedIdx] || row[createdIdx]);
+    var completedDate = parseRepairDate_(row[completedIdx] || row[updatedIdx] || row[createdIdx]);
     if (completedDate && completedDate < cutoff) {
       sheet.deleteRow(i + 2);
       removed++;
@@ -241,26 +249,27 @@ function purgeExpiredCompletedRepairs_(sheet) {
 function parseRepairDate_(value) {
   if (!value) return null;
   if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
-    const dateValue = new Date(value.getTime());
+    var dateValue = new Date(value.getTime());
     dateValue.setHours(0, 0, 0, 0);
     return dateValue;
   }
 
-  const text = String(value).trim();
-  const dateMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  var text = String(value).trim();
+  var dateMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (dateMatch) {
     return new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]));
   }
 
-  const parsed = new Date(text);
+  var parsed = new Date(text);
   if (isNaN(parsed.getTime())) return null;
   parsed.setHours(0, 0, 0, 0);
   return parsed;
 }
 
 function normalizeStatus_(status) {
-  const value = String(status || '').toLowerCase();
-  return value === 'done' || value === '完成' ? 'done' : 'pending';
+  var value = String(status || '').toLowerCase();
+  var doneText = String.fromCharCode(23436, 25104);
+  return value === 'done' || value === doneText ? 'done' : 'pending';
 }
 
 function now_() {

@@ -9,6 +9,7 @@
 - 手機端先顯示資料，再背景同步。
 - JSONP 寫入失敗時，可改用表單 POST 備援。
 - Apps Script `action=health` 能確認後端版本。
+- `Code.gs` 使用 Apps Script 相容語法，避免貼上後出現 `Unexpected token` 語法錯誤。
 - 已完成且超過 7 天的測試維修會自動清除。
 - 整套流程只寫入 sandbox Google Sheet。
 
@@ -67,7 +68,7 @@ repairs_sandbox
 {
   "ok": true,
   "sandbox": true,
-  "version": "sandbox-2026-06-14-mobile-sync-v1",
+  "version": "sandbox-2026-06-15-compatible-v1",
   "supports_get_upsert": true,
   "supports_form_post": true
 }
@@ -113,6 +114,8 @@ powershell -ExecutionPolicy Bypass -File .\sandbox\repair-sync-test\scripts\chec
 ```
 
 這只檢查檔案內容與基本語法，不會部署、不會寫正式資料。
+
+2026-06-15 補充：檢查腳本也會擋下 Apps Script 較容易出錯的新版 JavaScript 寫法，例如 `=>`、`...`、`const`、`let`。
 
 ## 下一階段
 
