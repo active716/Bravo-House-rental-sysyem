@@ -232,8 +232,24 @@ function scheduleAdminTaskCloudRefresh(delays=[2500, 7000, 16000]){
 async function verifyRepairCloudState(body){
   const id = repairIdFromBody(body);
   if(!id) return true;
-  if(body?.table === 'admin_tasks' || body?.table === 'staff_contacts') return true;
   const payload = body?.payload || {};
+  if(body?.table === 'admin_tasks' || body?.table === 'staff_contacts') {
+    try{
+      const data = await fetchGasJSONP('getAdminTaskData');
+      if(!data || data.ok === false) return false;
+      if(body.table === 'staff_contacts'){
+        const rows = (data.staff_contacts || data.staffContacts || []).map(normalizeStaffContactRecord);
+        return rows.some(s=>String(s.staff_id || s.id)===id || (payload.bind_code && s.bind_code===payload.bind_code));
+      }
+      const rows = (data.admin_tasks || data.adminTasks || []).map(normalizeAdminTaskRecord);
+      const item = rows.find(t=>String(t.id || t.task_id)===id);
+      if(!item) return false;
+      if(payload.status) return adminTaskStatusKey(item) === adminTaskStatusKey(payload);
+      return true;
+    } catch(err) {
+      return false;
+    }
+  }
   const data = await fetchGasJSONP('getRepairs');
   const rows = data.repairs || (data.tasks || []).filter(t=>String(t.task_type || '').toLowerCase() === 'repair');
   const item = rows.map(normalizeRepairRecord).find(r=>r.id===id);
@@ -245,8 +261,15 @@ async function verifyRepairCloudState(body){
 }
 
 async function sendRepairWithFallback(body){
+  const needsCloudVerification = body?.table === 'admin_tasks' || body?.table === 'staff_contacts';
   try{
-    return await sendRepairJSONP(body);
+    const result = await sendRepairJSONP(body);
+    if(needsCloudVerification){
+      await sleep(1800);
+      const verified = await verifyRepairCloudState(body);
+      if(!verified) throw new Error('背景同步尚未確認，稍後會自動重試');
+    }
+    return result;
   } catch(jsonpErr) {
     console.warn('repair JSONP sync failed, fallback to form POST:', jsonpErr);
     await postRepairViaForm(body);
@@ -896,9 +919,11 @@ function markLocalAdminTaskStatus(id, status){
 }
 
 function applyCloudAdminTaskData(data){
-  const pendingLocal=adminTasksData.filter(t=>t.sync_status === 'pending' || t.sync_status === 'error');
+  const keepLocalTask=t=>t.sync_status === 'pending' || t.sync_status === 'error' || t.sync_status === 'local' || t.source === 'github_pages';
+  const keepLocalStaff=s=>s.sync_status === 'pending' || s.sync_status === 'error' || s.sync_status === 'local' || s.source === 'github_pages';
+  const pendingLocal=adminTasksData.filter(keepLocalTask);
   const pendingById=new Map(pendingLocal.map(t=>[t.id || t.task_id, t]));
-  const pendingLocalStaff=staffContactsData.filter(s=>s.sync_status === 'pending' || s.sync_status === 'error');
+  const pendingLocalStaff=staffContactsData.filter(keepLocalStaff);
   const pendingStaffById=new Map(pendingLocalStaff.map(s=>[s.staff_id || s.id, s]));
   const cloudTasks=(data.admin_tasks || data.adminTasks || [])
     .map(normalizeAdminTaskRecord)
@@ -1974,7 +1999,6 @@ function initCRUD(){
     populateStaffOptions(payload.staff_id);
     if($('at_assignee')) $('at_assignee').value = payload.staff_id;
     renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
-    $('at_title')?.focus();
     showToast(HAS_GAS_WEB_APP ? '人員已新增，正在同步' : '人員已新增在本機');
     apiRequest('POST',{action:'upsert',table:'staff_contacts',payload})
       .then(()=>scheduleAdminTaskCloudRefresh())
