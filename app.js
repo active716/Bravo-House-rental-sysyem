@@ -940,9 +940,9 @@ async function loadCloudAdminTaskData(options={}){
   }
 }
 
-function populateStaffOptions(){
+function populateStaffOptions(preferredAssignee=''){
   const staff=activeStaffContacts();
-  const currentAssignee=$('at_assignee')?.value || '';
+  const currentAssignee=preferredAssignee || $('at_assignee')?.value || '';
   const currentFilter=$('adminTaskAssigneeFilter')?.value || 'all';
   const options=staff.map(s=>'<option value="'+escapeHtml(s.staff_id || s.id)+'">'+escapeHtml(s.name)+'（'+escapeHtml(staffRoleText(s.role))+'）</option>').join('');
   if($('at_assignee')){
@@ -1971,7 +1971,10 @@ function initCRUD(){
     staffContactForm.reset();
     $('sc_role').value = 'admin';
     renderStaffContacts();
+    populateStaffOptions(payload.staff_id);
+    if($('at_assignee')) $('at_assignee').value = payload.staff_id;
     renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
+    $('at_title')?.focus();
     showToast(HAS_GAS_WEB_APP ? '人員已新增，正在同步' : '人員已新增在本機');
     apiRequest('POST',{action:'upsert',table:'staff_contacts',payload})
       .then(()=>scheduleAdminTaskCloudRefresh())
