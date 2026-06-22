@@ -108,6 +108,11 @@
           <span class="nav-label">報修管理</span>
           <span class="nav-badge danger" id="navRepairBadge">4</span>
         </a>
+        <a href="#" class="nav-item" data-page="admin-tasks" id="nav-admin-tasks">
+          <span class="nav-icon">待</span>
+          <span class="nav-label">行政交辦</span>
+          <span class="nav-badge warn" id="navAdminTaskBadge">0</span>
+        </a>
         <a href="#" class="nav-item" data-page="contracts" id="nav-contracts">
           <span class="nav-icon">📋</span>
           <span class="nav-label">合約管理</span>
@@ -558,6 +563,136 @@
         </div>
 
         <div class="repair-cards" id="repairCards"></div>
+      </section>
+
+      <!-- ===== 行政交辦 ===== -->
+      <section class="page" id="page-admin-tasks">
+        <div class="kpi-grid kpi-grid-4">
+          <div class="kpi-card kpi-total">
+            <div class="kpi-icon">總</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiAdminTaskTotal">0</span>
+              <span class="kpi-label">全部交辦</span>
+            </div>
+          </div>
+          <div class="kpi-card" style="--accent: #ef4444;">
+            <div class="kpi-icon">待</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiAdminTaskOpen">0</span>
+              <span class="kpi-label">未完成</span>
+            </div>
+          </div>
+          <div class="kpi-card" style="--accent: #f59e0b;">
+            <div class="kpi-icon">今</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiAdminTaskDueToday">0</span>
+              <span class="kpi-label">今天截止</span>
+            </div>
+          </div>
+          <div class="kpi-card kpi-occupied">
+            <div class="kpi-icon">逾</div>
+            <div class="kpi-info">
+              <span class="kpi-value" id="kpiAdminTaskOverdue">0</span>
+              <span class="kpi-label">已逾期</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-task-workspace">
+          <div class="card admin-task-entry-card">
+            <div class="card-header">
+              <h3>新增行政交辦</h3>
+              <span class="badge badge-info">截止日必填</span>
+            </div>
+            <form id="adminTaskForm" class="admin-task-form">
+              <div class="admin-task-form-grid">
+                <div class="form-row">
+                  <label>交辦標題 <span class="req">*</span></label>
+                  <input id="at_title" type="text" placeholder="例如：提醒房客補件、整理合約資料" required>
+                </div>
+                <div class="form-row">
+                  <label>被交辦人 <span class="req">*</span></label>
+                  <select id="at_assignee" required>
+                    <option value="">請先選人員</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>截止日期 <span class="req">*</span></label>
+                  <input id="at_due_date" type="date" required>
+                </div>
+                <div class="form-row">
+                  <label>優先度</label>
+                  <select id="at_priority">
+                    <option value="normal">一般</option>
+                    <option value="high">高</option>
+                    <option value="urgent">緊急</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>交辦人</label>
+                  <input id="at_creator" type="text" value="管理員">
+                </div>
+              </div>
+              <div class="form-row">
+                <label>交辦說明</label>
+                <textarea id="at_desc" rows="3" placeholder="只寫對方完成任務需要知道的重點"></textarea>
+              </div>
+              <div class="repair-form-actions">
+                <span class="repair-form-note">新增後會同步到 Google Sheets，並推播摘要給被交辦人。</span>
+                <button type="submit" class="btn btn-primary">新增交辦</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="card admin-staff-card">
+            <div class="card-header">
+              <h3>員工 LINE 綁定</h3>
+              <span class="badge badge-neutral" id="staffBindCount">0 人</span>
+            </div>
+            <div class="card-body">
+              <form id="staffContactForm" class="staff-contact-form">
+                <div class="form-row">
+                  <label>姓名 <span class="req">*</span></label>
+                  <input id="sc_name" type="text" placeholder="例如：行政小幫手" required>
+                </div>
+                <div class="form-row">
+                  <label>角色</label>
+                  <select id="sc_role">
+                    <option value="admin">行政</option>
+                    <option value="frontline">一線</option>
+                    <option value="manager">管理員</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label>綁定代碼 <span class="req">*</span></label>
+                  <input id="sc_bind_code" type="text" placeholder="例如：A01 或 STAFF01" required>
+                </div>
+                <button type="submit" class="btn btn-ghost">新增人員</button>
+              </form>
+              <div class="staff-bind-help">員工在 LINE 傳：<strong>員工綁定 綁定代碼</strong></div>
+              <div class="staff-contact-list" id="staffContactList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-toolbar">
+          <div class="filter-group">
+            <select id="adminTaskStatusFilter" class="filter-select">
+              <option value="all">全部狀態</option>
+              <option value="open">未完成</option>
+              <option value="pending">待處理</option>
+              <option value="in_progress">處理中</option>
+              <option value="done">完成</option>
+              <option value="overdue">已逾期</option>
+            </select>
+            <select id="adminTaskAssigneeFilter" class="filter-select">
+              <option value="all">全部人員</option>
+            </select>
+          </div>
+          <span class="repair-retention-note">提醒規則：截止日當天提醒一次，逾期未完成每天提醒被交辦人。</span>
+        </div>
+
+        <div class="admin-task-cards" id="adminTaskCards"></div>
       </section>
 
       <!-- ===== 頁面：合約管理 ===== -->

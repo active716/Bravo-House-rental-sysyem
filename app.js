@@ -11,6 +11,7 @@ const HAS_GAS_WEB_APP = !GAS_WEB_APP_URL.includes('YOUR_SCRIPT_ID');
 const GAS_REPAIR_TABLE_ONLY = true;
 const LOCAL_STATE_KEY = 'rental_demo_state_v2';
 const REPAIR_SYNC_QUEUE_KEY = 'repair_sync_queue_v1';
+const ADMIN_TASK_PAGE_URL = 'https://active716.github.io/Bravo-House-rental-sysyem/';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let repairSyncInFlight = false;
 
@@ -49,10 +50,25 @@ function isRepairSyncBody(body){
   return String(payload.task_type || '').toLowerCase() === 'repair' || id.startsWith('MR') || payload.onsite_notice === true;
 }
 
+function isAdminTaskSyncBody(body){
+  if(!body || body.table !== 'admin_tasks') return false;
+  const payload = body.payload || {};
+  const id = String(payload.task_id || payload.id || '');
+  return String(payload.task_type || '').toLowerCase() === 'admin_task' || id.startsWith('AT');
+}
+
+function isStaffContactSyncBody(body){
+  return !!body && body.table === 'staff_contacts';
+}
+
+function isManagedSyncBody(body){
+  return isRepairSyncBody(body) || isAdminTaskSyncBody(body) || isStaffContactSyncBody(body);
+}
+
 async function sendRepairJSONP(body){
   const payload = body?.payload || {};
   const data = await fetchGasJSONP(body?.action || 'upsert', {
-    table: 'tasks',
+    table: body?.table || 'tasks',
     payload: JSON.stringify(payload)
   });
   if(!data || data.ok === false){
@@ -146,17 +162,23 @@ function repairSyncSignature(body){
     completed_at: payload.completed_at || '',
     room_id: payload.room_id || '',
     category: payload.category || '',
-    desc: payload.desc || payload.note || ''
+    title: payload.title || '',
+    desc: payload.desc || payload.note || '',
+    assignee_id: payload.assignee_id || '',
+    assignee_name: payload.assignee_name || '',
+    due_date: payload.due_date || '',
+    staff_id: payload.staff_id || '',
+    bind_code: payload.bind_code || ''
   });
 }
 
 function repairIdFromBody(body){
   const payload = body?.payload || {};
-  return String(payload.task_id || payload.id || '').trim();
+  return String(payload.task_id || payload.id || payload.staff_id || '').trim();
 }
 
 function queueRepairSync(body){
-  if(!HAS_GAS_WEB_APP || !isRepairSyncBody(body)) return { ok:true, local:true };
+  if(!HAS_GAS_WEB_APP || !isManagedSyncBody(body)) return { ok:true, local:true };
   const queue = readRepairSyncQueue();
   const signature = repairSyncSignature(body);
   if(!queue.some(job=>job.signature === signature)){
@@ -176,12 +198,18 @@ function queueRepairSync(body){
 function setLocalRepairSyncState(body, state, error=''){
   const id = repairIdFromBody(body);
   if(!id) return;
-  const item = repairsData.find(r=>r.id===id || r.task_id===id);
+  const table = body?.table || 'tasks';
+  let item = null;
+  if(table === 'admin_tasks') item = adminTasksData.find(t=>t.id===id || t.task_id===id);
+  else if(table === 'staff_contacts') item = staffContactsData.find(s=>s.id===id || s.staff_id===id);
+  else item = repairsData.find(r=>r.id===id || r.task_id===id);
   if(item){
     item.sync_status = state;
     item.sync_error = error;
     saveLocalState();
-    renderRepairs($('repairStatusFilter')?.value || 'all');
+    if(table === 'admin_tasks') renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
+    else if(table === 'staff_contacts') renderStaffContacts();
+    else renderRepairs($('repairStatusFilter')?.value || 'all');
     renderDashboard();
   }
 }
@@ -196,9 +224,15 @@ function scheduleRepairCloudRefresh(delays=[2500, 7000, 16000]){
   delays.forEach(delay=>setTimeout(()=>loadCloudRepairs({silent:true, preservePending:true}), delay));
 }
 
+function scheduleAdminTaskCloudRefresh(delays=[2500, 7000, 16000]){
+  if(!HAS_GAS_WEB_APP) return;
+  delays.forEach(delay=>setTimeout(()=>loadCloudAdminTaskData({silent:true, preservePending:true}), delay));
+}
+
 async function verifyRepairCloudState(body){
   const id = repairIdFromBody(body);
   if(!id) return true;
+  if(body?.table === 'admin_tasks' || body?.table === 'staff_contacts') return true;
   const payload = body?.payload || {};
   const data = await fetchGasJSONP('getRepairs');
   const rows = data.repairs || (data.tasks || []).filter(t=>String(t.task_type || '').toLowerCase() === 'repair');
@@ -245,7 +279,10 @@ async function processRepairSyncQueue(options={}){
       }
     }
     saveRepairSyncQueue(nextQueue);
-    if(hadSuccess) scheduleRepairCloudRefresh();
+    if(hadSuccess) {
+      scheduleRepairCloudRefresh();
+      scheduleAdminTaskCloudRefresh();
+    }
     if(nextQueue.length) {
       const delay = Math.min(90000, 8000 + Math.max(...nextQueue.map(job=>Number(job.attempts)||1)) * 6000);
       setTimeout(()=>processRepairSyncQueue({silent:true}), delay);
@@ -260,11 +297,11 @@ async function processRepairSyncQueue(options={}){
 // GET:  apiRequest('GET')  → 呼叫 ?action=getAll
 // POST: apiRequest('POST', {action,table,payload})
 async function apiRequest(method='GET', body=null){
-  if(!HAS_GAS_WEB_APP || (GAS_REPAIR_TABLE_ONLY && method !== 'GET' && !isRepairSyncBody(body))){
+  if(!HAS_GAS_WEB_APP || (GAS_REPAIR_TABLE_ONLY && method !== 'GET' && !isManagedSyncBody(body))){
     await sleep(120);
     return { ok:true, local:true, body };
   }
-  if(method !== 'GET' && isRepairSyncBody(body)){
+  if(method !== 'GET' && isManagedSyncBody(body)){
     return queueRepairSync(body);
   }
   try{
@@ -429,6 +466,8 @@ let invoicesData = [];
 let meterData = [];
 let availableData = [];
 let repairsData = [];
+let adminTasksData = [];
+let staffContactsData = [];
 let logsData = [];
 let configData = {};
 let roomsData = [];
@@ -438,7 +477,7 @@ function saveLocalState(){
   if(IS_GAS) return;
   try{
     localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify({
-      tenantsData, invoicesData, meterData, availableData, repairsData, roomsData, logsData
+      tenantsData, invoicesData, meterData, availableData, repairsData, adminTasksData, staffContactsData, roomsData, logsData
     }));
   } catch(err) {
     console.warn('local state save failed', err);
@@ -465,6 +504,8 @@ function loadLocalState(){
       repairsData = data.repairsData.filter(isManualRepairRecord);
       cleanedLegacyRepairs = repairsData.length !== data.repairsData.length;
     }
+    if(Array.isArray(data.adminTasksData)) adminTasksData = data.adminTasksData.map(normalizeAdminTaskRecord);
+    if(Array.isArray(data.staffContactsData)) staffContactsData = data.staffContactsData.map(normalizeStaffContactRecord);
     if(Array.isArray(data.roomsData)) roomsData = data.roomsData;
     if(Array.isArray(data.logsData)) logsData = data.logsData;
     if(cleanedLegacyRepairs) saveLocalState();
@@ -729,6 +770,257 @@ function addLocalRepair(payload){
   return item;
 }
 
+const todayISO=()=>new Date().toISOString().slice(0,10);
+const adminTaskStatusKey=item=>{
+  const status=String(item?.status || '').toLowerCase();
+  if(status === 'done' || status === 'completed' || String(item?.status || '') === '完成') return 'done';
+  if(status === 'in_progress' || status === 'doing' || String(item?.status || '') === '處理中') return 'in_progress';
+  return 'pending';
+};
+const isAdminTaskDone=item=>adminTaskStatusKey(item)==='done';
+const isAdminTaskOpen=item=>!isAdminTaskDone(item);
+const adminTaskStatusText=item=>({pending:'待處理',in_progress:'處理中',done:'完成'}[adminTaskStatusKey(item)] || '待處理');
+const adminTaskPriorityText=priority=>({normal:'一般',high:'高',urgent:'緊急'}[String(priority || 'normal')] || '一般');
+const staffRoleText=role=>({admin:'行政',frontline:'一線',manager:'管理員'}[String(role || 'admin')] || role || '行政');
+const adminTaskDueDiff=item=>diffDays(item?.due_date);
+const adminTaskDueState=item=>{
+  if(isAdminTaskDone(item)) return 'done';
+  const days=adminTaskDueDiff(item);
+  if(days < 0) return 'overdue';
+  if(days === 0) return 'due_today';
+  return 'future';
+};
+
+function normalizeStaffContactRecord(row){
+  const id=String(row?.staff_id || row?.id || '').trim();
+  return {
+    ...row,
+    id,
+    staff_id: id,
+    name: row?.name || row?.staff_name || '',
+    role: row?.role || 'admin',
+    bind_code: String(row?.bind_code || '').trim(),
+    line_user_id: row?.line_user_id || '',
+    active: row?.active === false || String(row?.active || '').toLowerCase() === 'false' ? false : true,
+    created_at: row?.created_at || '',
+    updated_at: row?.updated_at || ''
+  };
+}
+
+function normalizeAdminTaskRecord(row){
+  const id=String(row?.id || row?.task_id || '').trim();
+  const status=adminTaskStatusKey(row);
+  return {
+    ...row,
+    id,
+    task_id: row?.task_id || id,
+    task_type: 'admin_task',
+    title: row?.title || '',
+    desc: row?.desc || row?.note || '',
+    assignee_id: row?.assignee_id || '',
+    assignee_name: row?.assignee_name || '',
+    due_date: row?.due_date || '',
+    priority: row?.priority || 'normal',
+    creator: row?.creator || '管理員',
+    status,
+    created_at: row?.created_at || '',
+    updated_at: row?.updated_at || '',
+    completed_at: row?.completed_at || '',
+    line_new_sent_at: row?.line_new_sent_at || '',
+    line_due_sent_at: row?.line_due_sent_at || '',
+    line_overdue_last_sent_at: row?.line_overdue_last_sent_at || '',
+    line_done_sent_at: row?.line_done_sent_at || '',
+    page_url: row?.page_url || ADMIN_TASK_PAGE_URL,
+    source: row?.source || 'github_pages'
+  };
+}
+
+function staffById(id){
+  return staffContactsData.find(s=>String(s.staff_id || s.id)===String(id));
+}
+
+function activeStaffContacts(){
+  return staffContactsData.filter(s=>s.active !== false && (s.name || s.staff_id));
+}
+
+function upsertLocalStaffContact(payload){
+  const now=todayISO();
+  const id=payload.staff_id || payload.id || ('SC' + Date.now());
+  const item=normalizeStaffContactRecord({
+    ...payload,
+    id,
+    staff_id:id,
+    created_at:payload.created_at || now,
+    updated_at:now
+  });
+  item.sync_status=HAS_GAS_WEB_APP ? 'pending' : 'local';
+  item.sync_error='';
+  const idx=staffContactsData.findIndex(s=>s.staff_id===id || s.id===id || (item.bind_code && s.bind_code===item.bind_code));
+  if(idx >= 0) staffContactsData[idx]={...staffContactsData[idx], ...item};
+  else staffContactsData.push(item);
+  saveLocalState();
+  return item;
+}
+
+function upsertLocalAdminTask(payload){
+  const now=todayISO();
+  const id=payload.task_id || payload.id || ('AT' + Date.now());
+  const item=normalizeAdminTaskRecord({
+    ...payload,
+    id,
+    task_id:id,
+    created_at:payload.created_at || now,
+    updated_at:now
+  });
+  item.sync_status=HAS_GAS_WEB_APP ? 'pending' : 'local';
+  item.sync_error='';
+  const idx=adminTasksData.findIndex(t=>t.id===id || t.task_id===id);
+  if(idx >= 0) adminTasksData[idx]={...adminTasksData[idx], ...item};
+  else adminTasksData.unshift(item);
+  logsData.unshift({color:'orange',text:'新增行政交辦：' + item.title,time:'今天'});
+  logsData=logsData.slice(0,25);
+  saveLocalState();
+  return item;
+}
+
+function markLocalAdminTaskStatus(id, status){
+  const item=adminTasksData.find(t=>t.id===id || t.task_id===id);
+  if(item){
+    item.status=status;
+    item.updated_at=todayISO();
+    item.completed_at=status === 'done' ? item.updated_at : '';
+    item.sync_status=HAS_GAS_WEB_APP ? 'pending' : 'local';
+    item.sync_error='';
+  }
+  saveLocalState();
+}
+
+function applyCloudAdminTaskData(data){
+  const pendingLocal=adminTasksData.filter(t=>t.sync_status === 'pending' || t.sync_status === 'error');
+  const pendingById=new Map(pendingLocal.map(t=>[t.id || t.task_id, t]));
+  const pendingLocalStaff=staffContactsData.filter(s=>s.sync_status === 'pending' || s.sync_status === 'error');
+  const pendingStaffById=new Map(pendingLocalStaff.map(s=>[s.staff_id || s.id, s]));
+  const cloudTasks=(data.admin_tasks || data.adminTasks || [])
+    .map(normalizeAdminTaskRecord)
+    .filter(t=>t.id);
+  const cloudIds=new Set(cloudTasks.map(t=>t.id));
+  adminTasksData=[
+    ...pendingLocal.filter(t=>!cloudIds.has(t.id || t.task_id)),
+    ...cloudTasks.map(t=>pendingById.get(t.id) || t)
+  ];
+  const cloudStaff=(data.staff_contacts || data.staffContacts || [])
+    .map(normalizeStaffContactRecord)
+    .filter(s=>s.id || s.name || s.bind_code);
+  const cloudStaffIds=new Set(cloudStaff.map(s=>s.staff_id || s.id));
+  staffContactsData=[
+    ...pendingLocalStaff.filter(s=>!cloudStaffIds.has(s.staff_id || s.id)),
+    ...cloudStaff.map(s=>pendingStaffById.get(s.staff_id || s.id) || s)
+  ];
+  saveLocalState();
+}
+
+async function loadCloudAdminTaskData(options={}){
+  if(!HAS_GAS_WEB_APP) return false;
+  try{
+    if(!options.silent) showLoading();
+    const data=await fetchGasJSONP('getAdminTaskData');
+    applyCloudAdminTaskData(data || {});
+    showSheetStatus(true, 'GAS');
+    populateStaffOptions();
+    renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
+    renderStaffContacts();
+    renderDashboard();
+    return true;
+  } catch(err) {
+    console.warn('loadCloudAdminTaskData failed:', err);
+    if(!options.silent) showToast('行政交辦雲端資料讀取失敗，先使用本機資料','error');
+    return false;
+  } finally {
+    if(!options.silent) hideLoading();
+  }
+}
+
+function populateStaffOptions(){
+  const staff=activeStaffContacts();
+  const currentAssignee=$('at_assignee')?.value || '';
+  const currentFilter=$('adminTaskAssigneeFilter')?.value || 'all';
+  const options=staff.map(s=>'<option value="'+escapeHtml(s.staff_id || s.id)+'">'+escapeHtml(s.name)+'（'+escapeHtml(staffRoleText(s.role))+'）</option>').join('');
+  if($('at_assignee')){
+    $('at_assignee').innerHTML='<option value="">請先選人員</option>'+options;
+    if(currentAssignee && staff.some(s=>String(s.staff_id || s.id)===String(currentAssignee))) $('at_assignee').value=currentAssignee;
+  }
+  if($('adminTaskAssigneeFilter')){
+    $('adminTaskAssigneeFilter').innerHTML='<option value="all">全部人員</option>'+options;
+    if(currentFilter !== 'all' && staff.some(s=>String(s.staff_id || s.id)===String(currentFilter))) $('adminTaskAssigneeFilter').value=currentFilter;
+  }
+}
+
+function renderStaffContacts(){
+  populateStaffOptions();
+  const list=$('staffContactList');
+  const count=$('staffBindCount');
+  if(count) count.textContent=staffContactsData.length + ' 人';
+  if(!list) return;
+  list.innerHTML=staffContactsData.length ? staffContactsData.map(s=>{
+    const bound=!!s.line_user_id;
+    const syncBadge=s.sync_status === 'pending'
+      ? '<span class="badge badge-warn">同步中</span>'
+      : s.sync_status === 'error'
+        ? '<span class="badge badge-danger">同步失敗</span>'
+        : '';
+    return '<div class="staff-contact-item"><div><div class="staff-contact-name">'+escapeHtml(s.name || '-')+'</div><div class="staff-contact-meta">'+escapeHtml(staffRoleText(s.role))+'｜代碼 '+escapeHtml(s.bind_code || '-')+'</div></div><div class="staff-contact-badges"><span class="line-status"><span class="line-dot '+(bound?'bound':'unbound')+'"></span>'+(bound?'已綁定':'未綁定')+'</span>'+syncBadge+'</div></div>';
+  }).join('') : '<div class="empty-state">尚未新增人員，請先新增行政或一線人員。</div>';
+}
+
+function renderAdminTasks(statusFilter='all'){
+  let list=[...adminTasksData].map(normalizeAdminTaskRecord);
+  const assigneeFilter=$('adminTaskAssigneeFilter')?.value || 'all';
+  if(statusFilter === 'open') list=list.filter(isAdminTaskOpen);
+  else if(statusFilter === 'overdue') list=list.filter(t=>adminTaskDueState(t)==='overdue');
+  else if(statusFilter !== 'all') list=list.filter(t=>adminTaskStatusKey(t)===statusFilter);
+  if(assigneeFilter !== 'all') list=list.filter(t=>String(t.assignee_id)===String(assigneeFilter));
+  list.sort((a,b)=>{
+    const aDone=Number(isAdminTaskDone(a));
+    const bDone=Number(isAdminTaskDone(b));
+    if(aDone !== bDone) return aDone-bDone;
+    const aOver=adminTaskDueState(a)==='overdue' ? 0 : 1;
+    const bOver=adminTaskDueState(b)==='overdue' ? 0 : 1;
+    if(aOver !== bOver) return aOver-bOver;
+    return String(a.due_date || '').localeCompare(String(b.due_date || ''));
+  });
+
+  const openTasks=adminTasksData.filter(isAdminTaskOpen);
+  const dueToday=openTasks.filter(t=>adminTaskDueState(t)==='due_today');
+  const overdue=openTasks.filter(t=>adminTaskDueState(t)==='overdue');
+  if($('kpiAdminTaskTotal')) $('kpiAdminTaskTotal').textContent=adminTasksData.length;
+  if($('kpiAdminTaskOpen')) $('kpiAdminTaskOpen').textContent=openTasks.length;
+  if($('kpiAdminTaskDueToday')) $('kpiAdminTaskDueToday').textContent=dueToday.length;
+  if($('kpiAdminTaskOverdue')) $('kpiAdminTaskOverdue').textContent=overdue.length;
+  if($('navAdminTaskBadge')) $('navAdminTaskBadge').textContent=openTasks.length;
+
+  const cards=$('adminTaskCards');
+  if(!cards) return;
+  cards.innerHTML=list.length ? list.map(t=>{
+    const status=adminTaskStatusKey(t);
+    const dueState=adminTaskDueState(t);
+    const dueDays=adminTaskDueDiff(t);
+    const dueText=isAdminTaskDone(t) ? '已完成' : dueDays < 0 ? '逾期 '+Math.abs(dueDays)+' 天' : dueDays === 0 ? '今天截止' : '剩 '+dueDays+' 天';
+    const dueBadge=dueState === 'overdue' ? 'badge-danger' : dueState === 'due_today' ? 'badge-warn' : status === 'done' ? 'badge-success' : 'badge-info';
+    const statusBadge=status === 'done' ? 'badge-success' : status === 'in_progress' ? 'badge-warn' : 'badge-danger';
+    const syncBadge=t.sync_status === 'pending'
+      ? '<span class="badge badge-warn" title="尚未同步到雲端">同步中</span>'
+      : t.sync_status === 'error'
+        ? '<span class="badge badge-danger" title="'+escapeHtml(t.sync_error || '同步失敗')+'">同步失敗</span>'
+        : '';
+    const actions=status === 'done'
+      ? '<button class="btn btn-sm btn-ghost" data-action="setAdminTaskStatus" data-id="'+escapeHtml(t.id)+'" data-status="pending">重開</button>'
+      : '<button class="btn btn-sm btn-ghost" data-action="setAdminTaskStatus" data-id="'+escapeHtml(t.id)+'" data-status="in_progress">處理中</button><button class="btn btn-sm btn-success" data-action="setAdminTaskStatus" data-id="'+escapeHtml(t.id)+'" data-status="done">完成</button>';
+    return '<div class="admin-task-card status-'+status+' due-'+dueState+'"><div class="admin-task-card-header"><div><div class="admin-task-title">'+escapeHtml(t.title || '(未命名交辦)')+'</div><div class="admin-task-meta">交辦給 '+escapeHtml(t.assignee_name || '-')+'｜'+escapeHtml(adminTaskPriorityText(t.priority))+'</div></div><div class="admin-task-badges"><span class="badge '+statusBadge+'">'+escapeHtml(adminTaskStatusText(t))+'</span><span class="badge '+dueBadge+'">'+escapeHtml(dueText)+'</span>'+syncBadge+'</div></div><div class="admin-task-desc">'+escapeHtml(t.desc || '無補充說明')+'</div><div class="admin-task-footer"><span>截止：'+escapeHtml(t.due_date || '-')+'</span><span>交辦人：'+escapeHtml(t.creator || '管理員')+'</span><div class="repair-actions">'+actions+'</div></div></div>';
+  }).join('') : '<div class="empty-state">目前沒有符合條件的交辦事項。</div>';
+}
+if($('adminTaskStatusFilter')) $('adminTaskStatusFilter').addEventListener('change',()=>renderAdminTasks($('adminTaskStatusFilter').value));
+if($('adminTaskAssigneeFilter')) $('adminTaskAssigneeFilter').addEventListener('change',()=>renderAdminTasks($('adminTaskStatusFilter')?.value || 'all'));
+
 function populateRepairRoomOptions(){
   const select = $('rf_room');
   if(!select) return;
@@ -757,6 +1049,7 @@ function ensureCompanyBillingDemoData(){
 
 // ── 頁面切換 ──────────────────────────────────────────
 const pageTitles={dashboard:'儀表板',rooms:'房間管理',tenants:'房客管理',billing:'帳單管理',meter:'水電紀錄',repairs:'報修管理',contracts:'合約管理',reports:'月報表統計',available:'可承租房間'};
+pageTitles['admin-tasks']='行政交辦';
 $$('.nav-item').forEach(item=>{
   item.addEventListener('click',e=>{
     e.preventDefault();
@@ -829,12 +1122,15 @@ function renderDashboard(){
   const expiring=activeTenants.filter(t=>t.contract_end && diffDays(t.contract_end)<=30 && diffDays(t.contract_end)>0);
   const expired=activeTenants.filter(t=>t.contract_end && diffDays(t.contract_end)<=0);
   const pendingRepairs=repairsData.filter(isRepairOpen);
+  const openAdminTasks=adminTasksData.filter(isAdminTaskOpen);
+  const overdueAdminTasks=openAdminTasks.filter(t=>adminTaskDueState(t)==='overdue');
   
   let alerts='';
   if(unpaid.length)alerts+='<div class="alert-item danger"><span class="alert-icon">🚨</span>本月有 <b>'+unpaid.length+'</b> 張帳單尚未繳清</div>';
   if(expired.length)alerts+='<div class="alert-item danger"><span class="alert-icon">📋</span>有 <b>'+expired.length+'</b> 份合約已過期，請儘速處理續約</div>';
   if(expiring.length)alerts+='<div class="alert-item warn"><span class="alert-icon">⏰</span>有 <b>'+expiring.length+'</b> 份合約將在 30 天內到期</div>';
   if(pendingRepairs.length)alerts+='<div class="alert-item info"><span class="alert-icon">🔧</span>有 <b>'+pendingRepairs.length+'</b> 件維修未完成，請現場人員查看</div>';
+  if(openAdminTasks.length)alerts+='<div class="alert-item '+(overdueAdminTasks.length?'danger':'warn')+'"><span class="alert-icon">待</span>有 <b>'+openAdminTasks.length+'</b> 件行政交辦未完成'+(overdueAdminTasks.length?'，其中 '+overdueAdminTasks.length+' 件已逾期':'')+'</div>';
   $('alertStrip').innerHTML=alerts;
 
   // 館別長條圖
@@ -868,6 +1164,7 @@ function renderDashboard(){
   $('navVacantBadge').textContent=vacant.length;
   $('navUnpaidBadge').textContent=unpaid.length;
   $('navRepairBadge').textContent=pendingRepairs.length;
+  if($('navAdminTaskBadge')) $('navAdminTaskBadge').textContent=openAdminTasks.length;
   $('navContractBadge').textContent=allExpiring.length;
 }
 
@@ -1348,6 +1645,8 @@ function loadData() {
           availableData = data.available || [];
           logsData = data.logs || [];
           repairsData = (data.repairs || (data.tasks || []).filter(t=>String(t.task_type || '').toLowerCase()==='repair')).map(normalizeRepairRecord);
+          adminTasksData = (data.admin_tasks || data.adminTasks || []).map(normalizeAdminTaskRecord);
+          staffContactsData = (data.staff_contacts || data.staffContacts || []).map(normalizeStaffContactRecord);
           configData = data.config || {};
           
           showSheetStatus(true, 'GAS');
@@ -1388,11 +1687,16 @@ function loadData() {
     availableData= AVAILABLE_ROOMS;
     logsData     = MOCK_ACTIVITIES;
     repairsData  = [];
+    adminTasksData = [];
+    staffContactsData = [];
     loadLocalState();
     ensureCompanyBillingDemoData();
     showSheetStatus(false);
     init();
-    if(HAS_GAS_WEB_APP) loadCloudRepairs({silent:true});
+    if(HAS_GAS_WEB_APP) {
+      loadCloudRepairs({silent:true});
+      loadCloudAdminTaskData({silent:true});
+    }
 
     // 若試算表 ID 已設定且非預設值，則嘗試背景載入真實資料
     if(SPREADSHEET_ID && SPREADSHEET_ID !== 'YOUR_SPREADSHEET_ID') {
@@ -1421,7 +1725,10 @@ function loadData() {
         ensureCompanyBillingDemoData();
         showSheetStatus(true,'JSONP');
         init(); // 更新畫面
-        if(HAS_GAS_WEB_APP) loadCloudRepairs({silent:true});
+        if(HAS_GAS_WEB_APP) {
+          loadCloudRepairs({silent:true});
+          loadCloudAdminTaskData({silent:true});
+        }
       }).catch(err => {
         console.warn('JSONP 載入失敗，繼續使用 Mock 資料', err);
       });
@@ -1433,18 +1740,22 @@ function loadData() {
 function init(){
   initFilters();
   populateRepairRoomOptions();
+  populateStaffOptions();
   renderDashboard();
   renderRooms();
   renderTenants();
   renderBilling();
   renderMeter();
   renderRepairs();
+  renderAdminTasks();
+  renderStaffContacts();
   renderContracts();
   renderReports();
   renderAvailable();
   initCRUD();
   if(HAS_GAS_WEB_APP) {
     scheduleRepairSyncQueue([1200, 6000, 20000]);
+    scheduleAdminTaskCloudRefresh([1800, 8000, 22000]);
   }
 }
 
@@ -1640,6 +1951,88 @@ function initCRUD(){
   });
 
   // ── 關閉 Modal ────────────────────────────────────────
+  const staffContactForm = $('staffContactForm');
+  if(staffContactForm) staffContactForm.onsubmit = async function(e){
+    e.preventDefault();
+    const payload = {
+      staff_id: 'SC' + Date.now(),
+      name: $('sc_name').value.trim(),
+      role: $('sc_role').value,
+      bind_code: $('sc_bind_code').value.trim(),
+      line_user_id: '',
+      active: true,
+      source: 'github_pages'
+    };
+    if(!payload.name || !payload.bind_code){
+      showToast('請填姓名與綁定代碼','error');
+      return;
+    }
+    upsertLocalStaffContact(payload);
+    staffContactForm.reset();
+    $('sc_role').value = 'admin';
+    renderStaffContacts();
+    renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
+    showToast(HAS_GAS_WEB_APP ? '人員已新增，正在同步' : '人員已新增在本機');
+    apiRequest('POST',{action:'upsert',table:'staff_contacts',payload})
+      .then(()=>scheduleAdminTaskCloudRefresh())
+      .catch(err=>showToast('人員同步失敗：'+err.message,'error'));
+  };
+
+  const adminTaskForm = $('adminTaskForm');
+  if(adminTaskForm) adminTaskForm.onsubmit = async function(e){
+    e.preventDefault();
+    const assigneeId = $('at_assignee').value;
+    const staff = staffById(assigneeId);
+    const today = todayISO();
+    const payload = {
+      task_id: 'AT' + Date.now(),
+      task_type: 'admin_task',
+      title: $('at_title').value.trim(),
+      desc: $('at_desc').value.trim(),
+      note: $('at_desc').value.trim(),
+      assignee_id: assigneeId,
+      assignee_name: staff?.name || '',
+      due_date: $('at_due_date').value,
+      priority: $('at_priority').value,
+      creator: $('at_creator').value.trim() || '管理員',
+      status: 'pending',
+      created_at: today,
+      updated_at: today,
+      completed_at: '',
+      page_url: ADMIN_TASK_PAGE_URL,
+      source: 'github_pages'
+    };
+    if(!payload.title || !payload.assignee_id || !payload.due_date){
+      showToast('請填標題、被交辦人與截止日期','error');
+      return;
+    }
+    upsertLocalAdminTask(payload);
+    adminTaskForm.reset();
+    $('at_creator').value = '管理員';
+    renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
+    renderDashboard();
+    showToast(HAS_GAS_WEB_APP ? '交辦已新增，正在同步與推播' : '交辦已新增在本機');
+    apiRequest('POST',{action:'upsert',table:'admin_tasks',payload})
+      .then(()=>scheduleAdminTaskCloudRefresh())
+      .catch(err=>showToast('交辦同步失敗：'+err.message,'error'));
+  };
+
+  document.addEventListener('click', async function(e){
+    const btn = e.target.closest('[data-action="setAdminTaskStatus"]');
+    if(!btn) return;
+    const id = btn.dataset.id;
+    const status = btn.dataset.status;
+    const today = todayISO();
+    const payload = {task_id:id, status, updated_at:today, completed_at:status==='done'?today:''};
+    markLocalAdminTaskStatus(id, status);
+    renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
+    renderDashboard();
+    showToast(HAS_GAS_WEB_APP ? '狀態已更新，正在同步' : '狀態已更新在本機');
+    apiRequest('POST',{action:'upsert',table:'admin_tasks',payload})
+      .then(()=>scheduleAdminTaskCloudRefresh())
+      .catch(err=>showToast('狀態同步失敗：'+err.message,'error'));
+  });
+
   $$('.modal-close, .modal-cancel').forEach(el=>{
     el.onclick = () => closeAllModals();
   });

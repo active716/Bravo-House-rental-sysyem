@@ -230,6 +230,35 @@ body{font-family:var(--font-sans);background:var(--gray-100);color:var(--gray-80
 .repair-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .repair-cards>.empty-state{grid-column:1/-1;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius)}
 
+/* Admin task cards */
+.admin-task-workspace{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,.9fr);gap:16px;align-items:start;margin-bottom:18px}
+.admin-task-form{padding:18px 20px}
+.admin-task-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.admin-task-form textarea{resize:vertical;min-height:92px;line-height:1.5}
+.staff-contact-form{display:grid;grid-template-columns:1fr;gap:0;margin-bottom:14px}
+.staff-contact-form .btn{justify-content:center}
+.staff-bind-help{font-size:.78rem;color:var(--gray-600);background:var(--primary-50);border:1px solid var(--primary-100);border-radius:var(--radius-xs);padding:10px 12px;margin-bottom:12px;line-height:1.5}
+.staff-contact-list{display:flex;flex-direction:column;gap:8px}
+.staff-contact-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--gray-100)}
+.staff-contact-item:last-child{border-bottom:none}
+.staff-contact-name{font-size:.84rem;font-weight:800;color:var(--gray-900);margin-bottom:3px}
+.staff-contact-meta{font-size:.76rem;color:var(--gray-500);line-height:1.45}
+.staff-contact-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;font-size:.76rem}
+.admin-task-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.admin-task-card{background:#fff;border-radius:var(--radius);border:1px solid var(--gray-200);padding:18px 20px;box-shadow:var(--shadow-sm);transition:all .2s;border-left:4px solid var(--gray-300)}
+.admin-task-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.admin-task-card.status-pending{border-left-color:var(--danger-500)}
+.admin-task-card.status-in_progress{border-left-color:var(--warn-500)}
+.admin-task-card.status-done{border-left-color:var(--success-500)}
+.admin-task-card.due-overdue{background:linear-gradient(90deg,var(--danger-50),#fff 36%)}
+.admin-task-card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+.admin-task-title{font-size:.95rem;font-weight:800;color:var(--gray-900);line-height:1.35}
+.admin-task-meta{font-size:.76rem;color:var(--gray-500);margin-top:4px;line-height:1.4}
+.admin-task-badges{display:flex;align-items:flex-end;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.admin-task-desc{font-size:.83rem;color:var(--gray-600);line-height:1.55;margin-bottom:12px;white-space:pre-wrap}
+.admin-task-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.75rem;color:var(--gray-500)}
+.admin-task-cards>.empty-state{grid-column:1/-1;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius)}
+
 /* Contract status colors */
 .contract-days{font-weight:700;font-variant-numeric:tabular-nums}
 .contract-days.expired{color:var(--danger-600)}
@@ -450,4 +479,10 @@ body{font-family:var(--font-sans);background:var(--gray-100);color:var(--gray-80
   .repair-form-actions{align-items:stretch;flex-direction:column}
   .repair-form-actions .btn{width:100%;justify-content:center}
   .onsite-notice-item{align-items:flex-start;flex-direction:column}
+  .admin-task-workspace{grid-template-columns:1fr}
+  .admin-task-form-grid{grid-template-columns:1fr}
+  .admin-task-cards{grid-template-columns:1fr}
+  .admin-task-card-header{flex-direction:column}
+  .admin-task-badges{justify-content:flex-start}
+  .staff-contact-item{align-items:flex-start;flex-direction:column}
 }
