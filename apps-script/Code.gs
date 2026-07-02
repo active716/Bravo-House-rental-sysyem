@@ -5,8 +5,9 @@ const ADMIN_TASKS_SHEET_NAME = 'admin_tasks';
 const STAFF_CONTACTS_SHEET_NAME = 'staff_contacts';
 const ADMIN_TASK_LOGS_SHEET_NAME = 'logs';
 const ADMIN_TASK_PAGE_URL = 'https://active716.github.io/Bravo-House-rental-sysyem/';
-const GAS_VERSION = '2026-07-02-dashboard-data-v1';
+const GAS_VERSION = '2026-07-02-nanzi-a-contracts-reports-v1';
 const COMPLETED_REPAIR_RETENTION_DAYS = 7;
+const NANZI_A_BUILDING = '楠梓A館';
 const DASHBOARD_SHEETS = {
   rooms: 'rooms',
   tenants: 'tenants',
@@ -14,7 +15,8 @@ const DASHBOARD_SHEETS = {
   meter: 'meter',
   available: 'available',
   logs: 'logs',
-  config: 'config'
+  config: 'config',
+  srcTenant: 'src_tenant'
 };
 const REPAIR_HEADERS = [
   'id',
@@ -213,8 +215,20 @@ function output_(data, callback) {
 function readDashboardData_() {
   try {
     const ss = SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+    const contracts = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.srcTenant)
+      .map(normalizeContractForDashboard_)
+      .filter(isNanziADashboardRecord_);
+    const contractsByRoom = mapDashboardRowsByRoom_(contracts);
     const tenants = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.tenants)
       .map(normalizeTenantForDashboard_);
+    tenants.forEach(tenant => {
+      if (!isNanziADashboardRecord_(tenant)) return;
+      const contract = contractsByRoom[tenant.room_id];
+      if (!contract) return;
+      if (!tenant.contract_start) tenant.contract_start = contract.contract_start;
+      if (!tenant.contract_end) tenant.contract_end = contract.contract_end;
+      if (!tenant.property_name) tenant.property_name = contract.property_name;
+    });
     const invoices = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.invoices)
       .map(normalizeInvoiceForDashboard_);
     const meter = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.meter)
@@ -239,6 +253,8 @@ function readDashboardData_() {
       meter,
       meters: meter,
       available,
+      contracts,
+      reporting_months: buildNanziAReportingMonths_(invoices),
       logs,
       config
     };
@@ -251,6 +267,8 @@ function readDashboardData_() {
       meter: [],
       meters: [],
       available: [],
+      contracts: [],
+      reporting_months: { default_month: '', months: [] },
       logs: [],
       config: {},
       dashboard_error: err && err.message ? err.message : String(err)
@@ -320,6 +338,24 @@ function normalizeTenantForDashboard_(row) {
     billing_line_user_id: firstValue_(row, ['billing_line_user_id', 'contact_line_user_id']),
     rent_role: firstValue_(row, ['rent_role', '租金計算']),
     note: firstValue_(row, ['note', '備註'])
+  };
+}
+
+function normalizeContractForDashboard_(row) {
+  const roomId = firstValue_(row, ['room_id', '房號', '房間', 'room']);
+  const propertyName = firstValue_(row, ['property_name', 'building', '館別', '大樓']) || extractDashboardBuilding_(roomId);
+  const name = firstValue_(row, ['name', 'tenant_name', '姓名', '房客']);
+  return {
+    ...row,
+    contract_id: firstValue_(row, ['contract_id', 'id']) || ('CONTRACT-' + roomId),
+    room_id: roomId,
+    property_name: propertyName,
+    name,
+    phone: firstValue_(row, ['phone', '手機', '電話', 'contact_phone']),
+    rent: numberText_(firstValue_(row, ['rent', 'rent_amount', '租金'])),
+    status: firstValue_(row, ['status', '狀態']) || 'active',
+    contract_start: firstValue_(row, ['contract_start', '合約起日', '起租日', '租約起日']),
+    contract_end: firstValue_(row, ['contract_end', '合約迄日', '合約到期', '租約到期日', '到期日'])
   };
 }
 
@@ -449,6 +485,47 @@ function buildRoomsFromDashboardRows_(tenants, available) {
     };
   });
   return Object.keys(roomsById).sort().map(roomId => roomsById[roomId]);
+}
+
+function mapDashboardRowsByRoom_(rows) {
+  const map = {};
+  rows.forEach(row => {
+    if (row.room_id && !map[row.room_id]) map[row.room_id] = row;
+  });
+  return map;
+}
+
+function isNanziADashboardRecord_(row) {
+  const propertyName = String(row.property_name || row.building || row['館別'] || '').trim();
+  const roomId = String(row.room_id || row['房號'] || '').trim();
+  return propertyName === NANZI_A_BUILDING ||
+    roomId.indexOf(NANZI_A_BUILDING) === 0 ||
+    roomId.indexOf(NANZI_A_BUILDING) !== -1;
+}
+
+function buildNanziAReportingMonths_(invoices) {
+  const counts = {};
+  invoices
+    .filter(isNanziADashboardRecord_)
+    .forEach(invoice => {
+      const month = normalizeDashboardMonth_(invoice.yyyymm || invoice.billing_month);
+      if (!month) return;
+      counts[month] = (counts[month] || 0) + 1;
+    });
+
+  const months = Object.keys(counts).sort().map(month => ({
+    month,
+    count: counts[month]
+  }));
+  const maxCount = months.reduce((max, item) => Math.max(max, item.count), 0);
+  const completeMonths = months
+    .filter(item => maxCount && item.count >= Math.ceil(maxCount * 0.8))
+    .map(item => item.month);
+
+  return {
+    default_month: completeMonths.length ? completeMonths[completeMonths.length - 1] : '',
+    months
+  };
 }
 
 function firstValue_(row, keys) {

@@ -479,6 +479,39 @@ function buildBillingGroups(invoices){
 }
 const roomKey=r=>String(r?.room_id || r?.['房號'] || '').trim();
 const roomBuildingName=(roomId, room=null)=>room?.property_name||room?.['館別']||extractBuilding(roomId);
+const NANZI_A_BUILDING = '楠梓A館';
+let reportingMonthsData = null;
+
+function isNanziARecord(row){
+  const roomId=String(row?.room_id || row?.['房號'] || '').trim();
+  const property=String(row?.property_name || row?.building || row?.['館別'] || '').trim();
+  if(property === NANZI_A_BUILDING || roomId.startsWith(NANZI_A_BUILDING) || roomId.includes(NANZI_A_BUILDING)) return true;
+
+  const room = (roomsData || []).find(r=>roomKey(r) === roomId);
+  const tenant = (tenantsData || []).find(t=>String(t.room_id || '').trim() === roomId);
+  const roomProperty=String(room?.property_name || room?.building || room?.['館別'] || '').trim();
+  const tenantProperty=String(tenant?.property_name || tenant?.building || tenant?.['館別'] || '').trim();
+  return roomProperty === NANZI_A_BUILDING || tenantProperty === NANZI_A_BUILDING;
+}
+
+function nanziAInvoices(){
+  return invoicesData.filter(isNanziARecord);
+}
+
+function getNanziAReportMonth(selectedMonth=''){
+  const counts={};
+  nanziAInvoices().forEach(i=>{
+    const m=normalizeYyyymm(i.yyyymm || i.billing_month);
+    if(m) counts[m]=(counts[m]||0)+1;
+  });
+  const months=Object.keys(counts).sort();
+  if(!months.length) return selectedMonth || '';
+  const maxCount=Math.max(...months.map(m=>counts[m]));
+  const completeMonths=months.filter(m=>counts[m] >= Math.ceil(maxCount * 0.8));
+  const defaultMonth=reportingMonthsData?.default_month || completeMonths[completeMonths.length - 1] || months[months.length - 1];
+  if(selectedMonth && counts[selectedMonth] && counts[selectedMonth] >= Math.ceil(maxCount * 0.8)) return selectedMonth;
+  return defaultMonth;
+}
 
 // ── 判斷執行環境 ────────────────────────────────────────
 const IS_GAS = typeof google !== 'undefined' && google.script && google.script.run;
@@ -494,13 +527,14 @@ let staffContactsData = [];
 let logsData = [];
 let configData = {};
 let roomsData = [];
+let contractsData = [];
 let crudInitialized = false;
 
 function saveLocalState(){
   if(IS_GAS) return;
   try{
     localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify({
-      tenantsData, invoicesData, meterData, availableData, repairsData, adminTasksData, staffContactsData, roomsData, logsData
+      tenantsData, invoicesData, meterData, availableData, repairsData, adminTasksData, staffContactsData, roomsData, logsData, contractsData
     }));
   } catch(err) {
     console.warn('local state save failed', err);
@@ -531,6 +565,7 @@ function loadLocalState(){
     if(Array.isArray(data.staffContactsData)) staffContactsData = data.staffContactsData.map(normalizeStaffContactRecord);
     if(Array.isArray(data.roomsData)) roomsData = data.roomsData;
     if(Array.isArray(data.logsData)) logsData = data.logsData;
+    if(Array.isArray(data.contractsData)) contractsData = data.contractsData;
     if(cleanedLegacyRepairs) saveLocalState();
     return true;
   } catch(err) {
@@ -1032,6 +1067,7 @@ function applyCloudDashboardData(data={}){
   const rooms=firstArrayField(data, ['rooms', 'roomsData']);
   const available=firstArrayField(data, ['available', 'availableData']);
   const logs=firstArrayField(data, ['logs', 'logsData']);
+  const contracts=firstArrayField(data, ['contracts', 'contractsData']);
 
   if(tenants) tenantsData=tenants;
   if(invoices) invoicesData=invoices;
@@ -1039,6 +1075,8 @@ function applyCloudDashboardData(data={}){
   if(rooms) roomsData=rooms;
   if(available) availableData=available;
   if(logs) logsData=logs;
+  if(contracts) contractsData=contracts;
+  if(data.reporting_months && typeof data.reporting_months === 'object') reportingMonthsData=data.reporting_months;
 
   if(data.config && typeof data.config === 'object'){
     configData=data.config;
@@ -1452,7 +1490,8 @@ $('repairStatusFilter').addEventListener('change',()=>renderRepairs($('repairSta
 
 // === 7. 合約管理 (CONTRACTS) ===
 function renderContracts(){
-  const active=tenantsData.filter(t=>t.status==='active'&&t.contract_end);
+  const sourceRows=(contractsData.length ? contractsData : tenantsData).filter(isNanziARecord);
+  const active=sourceRows.filter(t=>(!t.status || t.status==='active')&&t.contract_end);
   const sorted=[...active].sort((a,b)=>diffDays(a.contract_end)-diffDays(b.contract_end));
   const expiring=sorted.filter(t=>diffDays(t.contract_end)>0&&diffDays(t.contract_end)<=30);
   const expired=sorted.filter(t=>diffDays(t.contract_end)<=0);
@@ -1461,65 +1500,63 @@ function renderContracts(){
   $('kpiContractExpiring').textContent=expiring.length;
   $('kpiContractExpired').textContent=expired.length;
   
+  if(!sorted.length){
+    $('contractTbody').innerHTML='<tr><td colspan="7"><div class="empty-state">楠梓A館目前沒有可顯示資料</div></td></tr>';
+    return;
+  }
+
   $('contractTbody').innerHTML=sorted.map(t=>{
     const d=diffDays(t.contract_end);
     const cls=d<=0?'expired':d<=30?'urgent':'safe';
     const badge=d<=0?'badge-danger':d<=30?'badge-warn':'badge-success';
     const label=d<=0?'已過期':d<=30?'即將到期':'正常';
-    const contactBtn=(d<=30)?'<button class="btn btn-sm btn-ghost" data-action="markContacted" data-room="'+t.room_id+'">📞 已聯絡</button>':'';
-    return '<tr><td class="room-id">'+t.room_id+'</td><td>'+t.name+'</td><td>'+(t.phone||'-')+'</td><td>'+(t.contract_end||'-')+'</td><td><span class="contract-days '+cls+'">'+(d<=0?'過期 '+Math.abs(d)+' 天':'剩 '+d+' 天')+'</span></td><td><span class="badge '+badge+'">'+label+'</span></td><td>'+contactBtn+'</td></tr>';
+    const contactBtn=(d<=30)?'<button class="btn btn-sm btn-ghost" data-action="markContacted" data-room="'+escapeHtml(t.room_id)+'">已聯絡</button>':'';
+    return '<tr><td class="room-id">'+escapeHtml(t.room_id)+'</td><td>'+escapeHtml(t.name||'-')+'</td><td>'+escapeHtml(t.phone||'-')+'</td><td>'+escapeHtml(t.contract_end||'-')+'</td><td><span class="contract-days '+cls+'">'+(d<=0?'過期 '+Math.abs(d)+' 天':'剩 '+d+' 天')+'</span></td><td><span class="badge '+badge+'">'+label+'</span></td><td>'+contactBtn+'</td></tr>';
   }).join('');
 }
 
 // === 8. 月報表統計 (REPORTS) ===
 function renderReports(){
-  const yyyymm = $('monthSelector').value;
-  const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
+  const selectedMonth = $('monthSelector').value;
+  const yyyymm = getNanziAReportMonth(selectedMonth);
+  const nanziInvoices = nanziAInvoices();
+  const currentInvoices = nanziInvoices.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
   
   const totalRev=currentInvoices.reduce((s,i)=>s+invoiceTotal(i),0);
   const totalRent=currentInvoices.reduce((s,i)=>s+invoiceRent(i),0);
   const totalElec=currentInvoices.reduce((s,i)=>s+invoiceElectricity(i),0);
   const totalWater=currentInvoices.reduce((s,i)=>s+invoiceWater(i),0);
   
-  $('reportSummary').innerHTML='<div class="report-stat"><div class="report-stat-value">'+fmt(totalRev)+'</div><div class="report-stat-label">總營收</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalRent)+'</div><div class="report-stat-label">租金收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalElec)+'</div><div class="report-stat-label">電費收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalWater)+'</div><div class="report-stat-label">水費收入</div></div>';
+  const monthNote = yyyymm && selectedMonth && yyyymm !== selectedMonth
+    ? '<div class="empty-state">楠梓A館 '+escapeHtml(selectedMonth)+' 資料尚未完整，已顯示最近完整月 '+escapeHtml(yyyymm)+'</div>'
+    : '';
+  $('reportSummary').innerHTML=monthNote+'<div class="report-stat"><div class="report-stat-value">'+fmt(totalRev)+'</div><div class="report-stat-label">楠梓A館總營收</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalRent)+'</div><div class="report-stat-label">租金收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalElec)+'</div><div class="report-stat-label">電費收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalWater)+'</div><div class="report-stat-label">水費收入</div></div>';
 
   // 營收歷史圖表
   const monthMap = {};
-  invoicesData.forEach(i => {
+  nanziInvoices.forEach(i => {
     const m = normalizeYyyymm(i.yyyymm);
     if(m) monthMap[m] = (monthMap[m] || 0) + invoiceTotal(i);
   });
   
   const months = Object.keys(monthMap).sort();
-  // 至少顯示 5 個月
-  if(months.length < 5) {
-    const tempMonths = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05'];
-    tempMonths.forEach(m => { if(!monthMap[m]) monthMap[m] = m === '2026-05' ? totalRev : Math.floor(Math.random()*20000) + 150000; });
-    months.push(...tempMonths.filter(m => !months.includes(m)));
-    months.sort();
-  }
   
   const values=months.map(m=>monthMap[m] || 0);
   const maxV=Math.max(...values, 1);
   
-  $('revenueChart').innerHTML=months.map((m,i)=>{
+  $('revenueChart').innerHTML=months.length ? months.map((m,i)=>{
     const barH = Math.round(values[i]/maxV*180);
     const activeColor = normalizeYyyymm(m) === yyyymm ? 'var(--primary-500)' : 'var(--gray-300)';
     const label = m.split('-')[1] + '月';
     return '<div class="chart-bar-group"><div class="chart-bar" style="height:'+barH+'px;background:'+activeColor+'" title="'+fmt(values[i])+'"></div><div class="chart-bar-label">'+label+'</div></div>';
-  }).join('');
+  }).join('') : '<div class="empty-state">楠梓A館目前沒有可顯示資料</div>';
 
   // 館別分配
-  $('buildingRevenueList').innerHTML=BUILDINGS.map(b=>{
-    const bInv=currentInvoices.filter(i=>i.room_id.includes(b.name.replace('館','')));
-    const bRev=bInv.reduce((s,i)=>s+invoiceTotal(i),0);
-    const pct=totalRev ? Math.round(bRev/totalRev*100) : 0;
-    return '<div class="building-row"><span class="building-name">'+b.name+'</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+pct+'%;background:'+b.color+'">'+pct+'%</div></div><span class="building-stats">'+fmt(bRev)+'</span></div>';
-  }).join('');
+  $('buildingRevenueList').innerHTML='<div class="building-row"><span class="building-name">楠梓A館</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+(totalRev ? 100 : 0)+'%;background:var(--primary-500)">'+(totalRev ? 100 : 0)+'%</div></div><span class="building-stats">'+fmt(totalRev)+'</span></div>';
 
   // 統計清單
-  const roomRecords=getRoomRecords();
-  const active=tenantsData.filter(t=>t.status==='active');
+  const roomRecords=getRoomRecords().filter(isNanziARecord);
+  const active=tenantsData.filter(t=>t.status==='active' && isNanziARecord(t));
   const vacant=roomRecords.filter(t=>t.status!=='active');
   const bound=active.filter(t=>t.line_user_id);
   const avgRent=active.length ? Math.round(totalRent/active.length) : 0;
@@ -1533,8 +1570,8 @@ function renderReports(){
 }
 
 function downloadReportCSV(){
-  const yyyymm = $('monthSelector').value;
-  const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
+  const yyyymm = getNanziAReportMonth($('monthSelector').value);
+  const currentInvoices = nanziAInvoices().filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
   const rows = [
     ['月份','房號','姓名','租金','電費','水費','滯納金','總計','截止日','繳費狀態'],
     ...currentInvoices.map(i=>[
@@ -1781,6 +1818,8 @@ function loadData() {
           repairsData = (data.repairs || (data.tasks || []).filter(t=>String(t.task_type || '').toLowerCase()==='repair')).map(normalizeRepairRecord);
           adminTasksData = (data.admin_tasks || data.adminTasks || []).map(normalizeAdminTaskRecord);
           staffContactsData = (data.staff_contacts || data.staffContacts || []).map(normalizeStaffContactRecord);
+          contractsData = data.contracts || data.contractsData || [];
+          reportingMonthsData = data.reporting_months || data.reportingMonths || null;
           configData = data.config || {};
           
           showSheetStatus(true, 'GAS');
