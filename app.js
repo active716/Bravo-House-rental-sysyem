@@ -965,6 +965,115 @@ async function loadCloudAdminTaskData(options={}){
   }
 }
 
+function firstArrayField(data, names){
+  for(const name of names){
+    if(Array.isArray(data?.[name])) return data[name];
+  }
+  return null;
+}
+
+function normalizeMeterDataRecord(row){
+  const yyyymm=normalizeYyyymm(row?.yyyymm || row?.billing_month || row?.month);
+  const prev=Number(row?.prev_kwh ?? row?.previous_reading ?? 0) || 0;
+  const curr=Number(row?.curr_kwh ?? row?.current_reading ?? 0) || 0;
+  const used=Number(row?.used_kwh ?? row?.usage ?? Math.max(0, curr - prev)) || 0;
+  return {
+    ...row,
+    yyyymm,
+    billing_month: yyyymm,
+    room_id: row?.room_id || row?.['房號'] || '',
+    prev_kwh: prev,
+    curr_kwh: curr,
+    used_kwh: used
+  };
+}
+
+function applyConfigMonth(config={}){
+  if(!config.yyyymm || !$('monthSelector')) return;
+  const selector=$('monthSelector');
+  let found=false;
+  for(let i=0; i<selector.options.length; i++){
+    if(selector.options[i].value === config.yyyymm){
+      selector.selectedIndex=i;
+      found=true;
+      break;
+    }
+  }
+  if(!found){
+    const opt=document.createElement('option');
+    opt.value=config.yyyymm;
+    opt.text=config.yyyymm;
+    selector.add(opt, 0);
+    selector.selectedIndex=0;
+  }
+}
+
+function renderAllDataViews(){
+  initFilters();
+  populateRepairRoomOptions();
+  populateStaffOptions();
+  renderDashboard();
+  renderRooms();
+  renderTenants();
+  renderBilling();
+  renderMeter();
+  renderRepairs($('repairStatusFilter')?.value || 'all');
+  renderAdminTasks($('adminTaskStatusFilter')?.value || 'all');
+  renderStaffContacts();
+  renderContracts();
+  renderReports();
+  renderAvailable();
+}
+
+function applyCloudDashboardData(data={}){
+  const tenants=firstArrayField(data, ['tenants', 'tenantsData']);
+  const invoices=firstArrayField(data, ['invoices', 'invoicesData']);
+  const meter=firstArrayField(data, ['meter', 'meters', 'meterData']);
+  const rooms=firstArrayField(data, ['rooms', 'roomsData']);
+  const available=firstArrayField(data, ['available', 'availableData']);
+  const logs=firstArrayField(data, ['logs', 'logsData']);
+
+  if(tenants) tenantsData=tenants;
+  if(invoices) invoicesData=invoices;
+  if(meter) meterData=meter.map(normalizeMeterDataRecord);
+  if(rooms) roomsData=rooms;
+  if(available) availableData=available;
+  if(logs) logsData=logs;
+
+  if(data.config && typeof data.config === 'object'){
+    configData=data.config;
+    applyConfigMonth(configData);
+  }
+
+  if(firstArrayField(data, ['repairs', 'tasks'])) {
+    applyCloudRepairs(firstArrayField(data, ['repairs', 'tasks']));
+  }
+  if(firstArrayField(data, ['admin_tasks', 'adminTasks', 'staff_contacts', 'staffContacts'])) {
+    applyCloudAdminTaskData(data);
+  }
+
+  saveLocalState();
+}
+
+async function loadCloudDashboardData(options={}){
+  if(!HAS_GAS_WEB_APP) return false;
+  try{
+    if(!options.silent) showLoading();
+    const data=await fetchGasJSONP('getAll');
+    if(data?.dashboard_error) throw new Error(data.dashboard_error);
+    applyCloudDashboardData(data || {});
+    showSheetStatus(true, 'GAS');
+    renderAllDataViews();
+    return true;
+  } catch(err) {
+    console.warn('loadCloudDashboardData failed:', err);
+    if(!options.silent) showToast('Cloud data load failed. Using local data.','error');
+    return false;
+  } finally {
+    if(!options.silent) hideLoading();
+  }
+}
+
 function populateStaffOptions(preferredAssignee=''){
   const staff=activeStaffContacts();
   const currentAssignee=preferredAssignee || $('at_assignee')?.value || '';
@@ -1719,12 +1828,8 @@ function loadData() {
     showSheetStatus(false);
     init();
     if(HAS_GAS_WEB_APP) {
-      loadCloudRepairs({silent:true});
-      loadCloudAdminTaskData({silent:true});
-    }
-
-    // 若試算表 ID 已設定且非預設值，則嘗試背景載入真實資料
-    if(SPREADSHEET_ID && SPREADSHEET_ID !== 'YOUR_SPREADSHEET_ID') {
+      loadCloudDashboardData({silent:true});
+    } else if(SPREADSHEET_ID && SPREADSHEET_ID !== 'YOUR_SPREADSHEET_ID') {
       Promise.all([
         fetchSheetJSONP('tenants'),
         fetchSheetJSONP('invoices'),
@@ -1750,10 +1855,6 @@ function loadData() {
         ensureCompanyBillingDemoData();
         showSheetStatus(true,'JSONP');
         init(); // 更新畫面
-        if(HAS_GAS_WEB_APP) {
-          loadCloudRepairs({silent:true});
-          loadCloudAdminTaskData({silent:true});
-        }
       }).catch(err => {
         console.warn('JSONP 載入失敗，繼續使用 Mock 資料', err);
       });

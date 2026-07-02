@@ -1,11 +1,21 @@
 const SPREADSHEET_ID = '1IPcwCNKbCRVz9JsvQYeYhZ4qQnEPzQZza8WE081VcJ0';
+const DASHBOARD_SPREADSHEET_ID = '1HiRGZEQiw9k0NZi59M87e-mjRCLUkgcHIrJRaeX9Cqo';
 const REPAIRS_SHEET_NAME = 'repairs';
 const ADMIN_TASKS_SHEET_NAME = 'admin_tasks';
 const STAFF_CONTACTS_SHEET_NAME = 'staff_contacts';
 const ADMIN_TASK_LOGS_SHEET_NAME = 'logs';
 const ADMIN_TASK_PAGE_URL = 'https://active716.github.io/Bravo-House-rental-sysyem/';
-const GAS_VERSION = '2026-06-22-admin-tasks-mvp-v1';
+const GAS_VERSION = '2026-07-02-dashboard-data-v1';
 const COMPLETED_REPAIR_RETENTION_DAYS = 7;
+const DASHBOARD_SHEETS = {
+  rooms: 'rooms',
+  tenants: 'tenants',
+  invoices: 'invoices',
+  meter: 'meter',
+  available: 'available',
+  logs: 'logs',
+  config: 'config'
+};
 const REPAIR_HEADERS = [
   'id',
   'task_type',
@@ -61,7 +71,19 @@ function doGet(e) {
     const repairs = readRepairs_();
     const adminTasks = readAdminTasks_();
     const staffContacts = readStaffContacts_();
-    return output_({ ok: true, repairs, tasks: repairs, admin_tasks: adminTasks, staff_contacts: staffContacts }, params.callback);
+    const dashboardData = readDashboardData_();
+    return output_({
+      ok: true,
+      ...dashboardData,
+      repairs,
+      tasks: repairs,
+      admin_tasks: adminTasks,
+      staff_contacts: staffContacts
+    }, params.callback);
+  }
+
+  if (action === 'getDashboardData') {
+    return output_({ ok: true, ...readDashboardData_() }, params.callback);
   }
 
   if (action === 'getRepairs') {
@@ -86,6 +108,7 @@ function doGet(e) {
       supports_admin_tasks: true,
       supports_staff_contacts: true,
       supports_admin_task_reminders: true,
+      supports_dashboard_data: true,
       completed_repair_retention_days: COMPLETED_REPAIR_RETENTION_DAYS
     }, params.callback);
   }
@@ -95,6 +118,17 @@ function doGet(e) {
   }
 
   return output_({ ok: false, error: 'Unsupported action: ' + action }, params.callback);
+}
+
+function getDashboardData() {
+  return {
+    ok: true,
+    ...readDashboardData_(),
+    repairs: readRepairs_(),
+    tasks: readRepairs_(),
+    admin_tasks: readAdminTasks_(),
+    staff_contacts: readStaffContacts_()
+  };
 }
 
 function doPost(e) {
@@ -174,6 +208,286 @@ function output_(data, callback) {
   return ContentService
     .createTextOutput(json)
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function readDashboardData_() {
+  try {
+    const ss = SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+    const tenants = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.tenants)
+      .map(normalizeTenantForDashboard_);
+    const invoices = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.invoices)
+      .map(normalizeInvoiceForDashboard_);
+    const meter = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.meter)
+      .map(normalizeMeterForDashboard_);
+    const available = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.available)
+      .map(normalizeAvailableForDashboard_);
+    let rooms = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.rooms)
+      .map(normalizeRoomForDashboard_);
+    const logs = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.logs)
+      .map(normalizeLogForDashboard_);
+    const config = readConfigForDashboard_(ss);
+
+    if (!rooms.length) {
+      rooms = buildRoomsFromDashboardRows_(tenants, available);
+    }
+
+    return {
+      data_source: 'dashboard_spreadsheet',
+      rooms,
+      tenants,
+      invoices,
+      meter,
+      meters: meter,
+      available,
+      logs,
+      config
+    };
+  } catch (err) {
+    return {
+      data_source: 'dashboard_spreadsheet',
+      rooms: [],
+      tenants: [],
+      invoices: [],
+      meter: [],
+      meters: [],
+      available: [],
+      logs: [],
+      config: {},
+      dashboard_error: err && err.message ? err.message : String(err)
+    };
+  }
+}
+
+function readOptionalSheetObjects_(ss, sheetName) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  const values = sheet.getDataRange().getDisplayValues();
+  if (!values.length) return [];
+  const headers = values[0].map(header => String(header || '').trim());
+  return values.slice(1)
+    .filter(row => row.some(cell => String(cell || '').trim() !== ''))
+    .map((row, rowIndex) => {
+      const item = { _rowNumber: rowIndex + 2 };
+      headers.forEach((header, colIndex) => {
+        if (!header) return;
+        item[header] = row[colIndex] === undefined || row[colIndex] === null ? '' : String(row[colIndex]).trim();
+      });
+      return item;
+    });
+}
+
+function readConfigForDashboard_(ss) {
+  const rows = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.config);
+  const config = {};
+  rows.forEach(row => {
+    const key = firstValue_(row, ['key', 'name', 'setting', '設定', '項目']);
+    const value = firstValue_(row, ['value', '設定值', '值']);
+    if (key) config[key] = value;
+  });
+
+  if (!Object.keys(config).length) {
+    const sheet = ss.getSheetByName(DASHBOARD_SHEETS.config);
+    if (sheet) {
+      const values = sheet.getRange('A1:B20').getDisplayValues();
+      values.forEach(row => {
+        const key = String(row[0] || '').trim();
+        if (key) config[key] = String(row[1] || '').trim();
+      });
+    }
+  }
+
+  return config;
+}
+
+function normalizeTenantForDashboard_(row) {
+  const roomId = firstValue_(row, ['room_id', '房號', '房間', 'room']);
+  const name = firstValue_(row, ['name', 'tenant_name', '姓名', '房客']);
+  return {
+    ...row,
+    tenant_id: firstValue_(row, ['tenant_id', 'id']) || ('T-' + roomId),
+    room_id: roomId,
+    name,
+    phone: firstValue_(row, ['phone', '手機', '電話', 'contact_phone']),
+    rent: numberText_(firstValue_(row, ['rent', 'rent_amount', '租金'])),
+    people: numberText_(firstValue_(row, ['people', '人數'])) || 1,
+    status: firstValue_(row, ['status', '狀態']) || 'active',
+    line_user_id: firstValue_(row, ['line_user_id', 'contact_line_user_id', 'LINE ID', 'LINE_ID']),
+    contract_start: firstValue_(row, ['contract_start', '合約起日']),
+    contract_end: firstValue_(row, ['contract_end', '合約迄日', '合約到期']),
+    billing_account: firstValue_(row, ['billing_account', '帳單對象', '合併帳單名稱']),
+    billing_contact: firstValue_(row, ['billing_contact', '帳務窗口', '收件人']),
+    billing_contact_phone: firstValue_(row, ['billing_contact_phone', '收件電話']),
+    billing_line_user_id: firstValue_(row, ['billing_line_user_id', 'contact_line_user_id']),
+    rent_role: firstValue_(row, ['rent_role', '租金計算']),
+    note: firstValue_(row, ['note', '備註'])
+  };
+}
+
+function normalizeInvoiceForDashboard_(row) {
+  const yyyymm = normalizeDashboardMonth_(firstValue_(row, ['yyyymm', 'billing_month', '月份']));
+  const rent = numberText_(firstValue_(row, ['rent', 'rent_amount', '租金']));
+  const electricity = numberText_(firstValue_(row, ['electricity', 'electric_fee', '電費']));
+  const water = numberText_(firstValue_(row, ['water', 'water_fee', '水費']));
+  const lateFee = numberText_(firstValue_(row, ['late_fee', 'other_fee', '滯納金', '其他費用']));
+  const total = numberText_(firstValue_(row, ['total', 'total_amount', 'invoice_total', '合計', '總金額'])) ||
+    rent + electricity + water + lateFee;
+  const status = firstValue_(row, ['status', 'invoice_status', '繳費狀態']);
+  const paid = isDashboardPaid_(status) || isDashboardPaid_(firstValue_(row, ['paid', '已繳']));
+
+  return {
+    ...row,
+    invoice_id: firstValue_(row, ['invoice_id', 'id']) || ('INV' + yyyymm + '-' + firstValue_(row, ['room_id', '房號'])),
+    room_id: firstValue_(row, ['room_id', '房號']),
+    tenant_name: firstValue_(row, ['tenant_name', 'name', '房客']),
+    name: firstValue_(row, ['name', 'tenant_name', '房客']),
+    billing_account: firstValue_(row, ['billing_account', 'billing_name', '帳單對象', '合併帳單名稱']),
+    billing_contact: firstValue_(row, ['billing_contact', '帳務窗口', '收件人']),
+    billing_contact_phone: firstValue_(row, ['billing_contact_phone', '收件電話']),
+    billing_line_user_id: firstValue_(row, ['billing_line_user_id', 'line_user_id']),
+    rent_role: firstValue_(row, ['rent_role', '租金計算']),
+    billing_month: yyyymm,
+    yyyymm,
+    rent,
+    electric_fee: electricity,
+    electricity,
+    water_fee: water,
+    water,
+    other_fee: lateFee,
+    late_fee: lateFee,
+    total_amount: total,
+    total,
+    status: paid ? 'paid' : (status || 'unpaid'),
+    paid,
+    sent: isDashboardPaid_(firstValue_(row, ['sent', '已發送'])) || !!firstValue_(row, ['billing_line_user_id', 'line_user_id']),
+    due_date: firstValue_(row, ['due_date', '繳費期限']),
+    paid_date: firstValue_(row, ['paid_date', '繳費日期']),
+    note: firstValue_(row, ['note', '備註'])
+  };
+}
+
+function normalizeMeterForDashboard_(row) {
+  const yyyymm = normalizeDashboardMonth_(firstValue_(row, ['yyyymm', 'billing_month', '月份']));
+  const prev = numberText_(firstValue_(row, ['prev_kwh', 'previous_reading', '上期度數']));
+  const curr = numberText_(firstValue_(row, ['curr_kwh', 'current_reading', '本期度數']));
+  const used = numberText_(firstValue_(row, ['used_kwh', 'usage', '使用度數'])) || Math.max(0, curr - prev);
+  return {
+    ...row,
+    yyyymm,
+    billing_month: yyyymm,
+    room_id: firstValue_(row, ['room_id', '房號']),
+    prev_kwh: prev,
+    previous_reading: prev,
+    curr_kwh: curr,
+    current_reading: curr,
+    used_kwh: used,
+    usage: used,
+    note: firstValue_(row, ['note', '備註'])
+  };
+}
+
+function normalizeRoomForDashboard_(row) {
+  const roomId = firstValue_(row, ['room_id', '房號', '房間']);
+  return {
+    ...row,
+    room_id: roomId,
+    property_name: firstValue_(row, ['property_name', 'building', '館別', '大樓']) || extractDashboardBuilding_(roomId),
+    rent: numberText_(firstValue_(row, ['rent', '租金'])),
+    status: normalizeDashboardRoomStatus_(firstValue_(row, ['status', '狀態'])),
+    note: firstValue_(row, ['note', '備註'])
+  };
+}
+
+function normalizeAvailableForDashboard_(row) {
+  const roomId = firstValue_(row, ['room_id', '房號', '房間']);
+  const building = firstValue_(row, ['property_name', 'building', '館別', '大樓']) || extractDashboardBuilding_(roomId);
+  const rent = numberText_(firstValue_(row, ['rent', '租金', '月租']));
+  return {
+    ...row,
+    room_id: roomId,
+    '房號': roomId,
+    property_name: building,
+    '館別': building,
+    rent,
+    '租金': rent,
+    status: normalizeDashboardRoomStatus_(firstValue_(row, ['status', '狀態']) || 'vacant'),
+    note: firstValue_(row, ['note', '備註'])
+  };
+}
+
+function normalizeLogForDashboard_(row) {
+  return {
+    ...row,
+    color: firstValue_(row, ['color']) || 'blue',
+    text: firstValue_(row, ['text', 'summary', 'message', '內容']) || firstValue_(row, ['type']),
+    time: firstValue_(row, ['time', 'timestamp', 'created_at']) || ''
+  };
+}
+
+function buildRoomsFromDashboardRows_(tenants, available) {
+  const roomsById = {};
+  tenants.forEach(tenant => {
+    const roomId = tenant.room_id;
+    if (!roomId || roomsById[roomId]) return;
+    roomsById[roomId] = {
+      room_id: roomId,
+      property_name: extractDashboardBuilding_(roomId),
+      rent: tenant.rent || 0,
+      status: tenant.status === 'active' ? 'occupied' : normalizeDashboardRoomStatus_(tenant.status),
+      note: tenant.note || ''
+    };
+  });
+  available.forEach(item => {
+    const roomId = item.room_id;
+    if (!roomId) return;
+    roomsById[roomId] = {
+      ...roomsById[roomId],
+      room_id: roomId,
+      property_name: item.property_name || extractDashboardBuilding_(roomId),
+      rent: item.rent || roomsById[roomId]?.rent || 0,
+      status: normalizeDashboardRoomStatus_(item.status || 'vacant'),
+      note: item.note || roomsById[roomId]?.note || ''
+    };
+  });
+  return Object.keys(roomsById).sort().map(roomId => roomsById[roomId]);
+}
+
+function firstValue_(row, keys) {
+  for (let i = 0; i < keys.length; i++) {
+    const value = row[keys[i]];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+  }
+  return '';
+}
+
+function numberText_(value) {
+  const cleaned = String(value || '').replace(/[$,，\s]/g, '');
+  const numberValue = Number(cleaned);
+  return isNaN(numberValue) ? 0 : numberValue;
+}
+
+function normalizeDashboardMonth_(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})[-/](\d{1,2})/);
+  if (match) return match[1] + '-' + ('0' + match[2]).slice(-2);
+  return text;
+}
+
+function isDashboardPaid_(value) {
+  const text = String(value || '').trim().toLowerCase();
+  return text === 'true' || text === '1' || text === 'paid' || text === '已繳' || text === '撌脩像';
+}
+
+function normalizeDashboardRoomStatus_(status) {
+  const text = String(status || '').trim().toLowerCase();
+  if (text === 'active' || text === 'occupied' || text === '已出租') return 'occupied';
+  if (text === 'cleaning' || text === '整理中') return 'cleaning';
+  return 'vacant';
+}
+
+function extractDashboardBuilding_(roomId) {
+  const text = String(roomId || '').trim();
+  const match = text.match(/^(.+?)(\d{2,4}|[A-Z]?\d+)$/);
+  return match ? match[1] : text;
 }
 
 function getRepairsSheet_() {
