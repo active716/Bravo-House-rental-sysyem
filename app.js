@@ -5,7 +5,7 @@ const TODAY=new Date();
 // ══════════════════════════════════════════
 //  ★ 請將你的 GAS Web App 網址貼在這裡 ★
 // ══════════════════════════════════════════
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwDzpxuTFkUdQxzBEgdIzETqenKlDcKpN_AjKjG2IIRkls7BHZGNEF78lbbro-dJ2Pv/exec';
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz5wdTydn9GC83zuLZ7iGyP6YmYyo8kmtxkREiLqZOr7rNo9afSqUIqxBlIdiKBb3SiLA/exec';
 // ══════════════════════════════════════════
 const HAS_GAS_WEB_APP = !GAS_WEB_APP_URL.includes('YOUR_SCRIPT_ID');
 const GAS_REPAIR_TABLE_ONLY = true;
@@ -1480,6 +1480,9 @@ function renderBilling(){
 
 // === 5. 水電紀錄 (METER) ===
 function renderMeter(){
+  const meterTable=$('meterTbody')?.closest('table');
+  const meterHeaders=meterTable ? meterTable.querySelectorAll('th') : [];
+  if(meterHeaders[5]) meterHeaders[5].textContent='水電合計';
   const yyyymm = $('monthSelector').value;
   const currentMeter = meterData.filter(m => normalizeYyyymm(m.yyyymm) === yyyymm);
   const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
@@ -1494,11 +1497,21 @@ function renderMeter(){
   
   $('meterTbody').innerHTML=currentMeter.length ? currentMeter.map(m=>{
     const name = tenantMap[m.room_id] || '-';
-    const elecCharge = invoiceMap[m.room_id] ? invoiceElectricity(invoiceMap[m.room_id]) : 0;
+    const invoice=invoiceMap[m.room_id];
+    const utilityCharge = invoice
+      ? (invoiceHasCombinedUtility(invoice) ? invoiceUtilityTotal(invoice) : invoiceElectricity(invoice))
+      : Number(m.utility_total || 0);
+    const hasReadings=m.has_readings===true || (m.prev_kwh!==undefined && m.curr_kwh!==undefined && String(m.prev_kwh)!=='' && String(m.curr_kwh)!=='');
     const usedK = Number(m.used_kwh) || 0;
     const pct=Math.round(usedK/maxK*100);
     const lv=usedK>160?'high':usedK>100?'medium':'low';
-    return '<tr><td class="room-id">'+escapeHtml(m.room_id)+'</td><td>'+escapeHtml(name)+'</td><td class="amount">'+(m.prev_kwh || 0)+'</td><td class="amount">'+(m.curr_kwh || 0)+'</td><td class="amount" style="font-weight:700">'+usedK+' 度</td><td class="amount">'+fmt(elecCharge)+'</td><td><div class="meter-bar-wrapper"><div class="meter-bar"><div class="meter-bar-fill '+lv+'" style="width:'+pct+'%"></div></div><span class="meter-kwh">'+usedK+'度</span></div></td></tr>';
+    const readingCells=hasReadings
+      ? '<td class="amount">'+(m.prev_kwh || 0)+'</td><td class="amount">'+(m.curr_kwh || 0)+'</td><td class="amount" style="font-weight:700">'+usedK+' 度</td>'
+      : '<td class="amount">—</td><td class="amount">—</td><td class="amount">來源未提供</td>';
+    const bar=hasReadings
+      ? '<div class="meter-bar-wrapper"><div class="meter-bar"><div class="meter-bar-fill '+lv+'" style="width:'+pct+'%"></div></div><span class="meter-kwh">'+usedK+'度</span></div>'
+      : '<span class="badge badge-neutral">總金額已驗證</span>';
+    return '<tr><td class="room-id">'+escapeHtml(m.room_id)+'</td><td>'+escapeHtml(name)+'</td>'+readingCells+'<td class="amount">'+fmt(utilityCharge)+'</td><td>'+bar+'</td></tr>';
   }).join('') : '<tr><td colspan="7" class="empty-state">本月尚無電表讀數紀錄</td></tr>';
 }
 
@@ -1570,23 +1583,19 @@ function renderContracts(){
 // === 8. 月報表統計 (REPORTS) ===
 function renderReports(){
   const selectedMonth = $('monthSelector').value;
-  const yyyymm = getNanziAReportMonth(selectedMonth);
-  const nanziInvoices = nanziAInvoices();
-  const currentInvoices = nanziInvoices.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
+  const yyyymm = selectedMonth;
+  const dashboardInvoices = invoicesData;
+  const currentInvoices = dashboardInvoices.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
   
   const totalRev=currentInvoices.reduce((s,i)=>s+invoiceTotal(i),0);
   const totalRent=currentInvoices.reduce((s,i)=>s+invoiceRent(i),0);
-  const totalElec=currentInvoices.reduce((s,i)=>s+invoiceElectricity(i),0);
-  const totalWater=currentInvoices.reduce((s,i)=>s+invoiceWater(i),0);
+  const totalUtility=currentInvoices.reduce((s,i)=>s+(invoiceHasCombinedUtility(i) ? invoiceUtilityTotal(i) : invoiceElectricity(i)+invoiceWater(i)),0);
   
-  const monthNote = yyyymm && selectedMonth && yyyymm !== selectedMonth
-    ? '<div class="empty-state">楠梓A館 '+escapeHtml(selectedMonth)+' 資料尚未完整，已顯示最近完整月 '+escapeHtml(yyyymm)+'</div>'
-    : '';
-  $('reportSummary').innerHTML=monthNote+'<div class="report-stat"><div class="report-stat-value">'+fmt(totalRev)+'</div><div class="report-stat-label">楠梓A館總營收</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalRent)+'</div><div class="report-stat-label">租金收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalElec)+'</div><div class="report-stat-label">電費收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalWater)+'</div><div class="report-stat-label">水費收入</div></div>';
+  $('reportSummary').innerHTML='<div class="report-stat"><div class="report-stat-value">'+fmt(totalRev)+'</div><div class="report-stat-label">全部館別總額</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalRent)+'</div><div class="report-stat-label">租金收入</div></div><div class="report-stat"><div class="report-stat-value">'+fmt(totalUtility)+'</div><div class="report-stat-label">水電合計</div></div><div class="report-stat"><div class="report-stat-value">'+currentInvoices.length+'</div><div class="report-stat-label">已驗證帳單</div></div>';
 
   // 營收歷史圖表
   const monthMap = {};
-  nanziInvoices.forEach(i => {
+  dashboardInvoices.forEach(i => {
     const m = normalizeYyyymm(i.yyyymm);
     if(m) monthMap[m] = (monthMap[m] || 0) + invoiceTotal(i);
   });
@@ -1601,14 +1610,17 @@ function renderReports(){
     const activeColor = normalizeYyyymm(m) === yyyymm ? 'var(--primary-500)' : 'var(--gray-300)';
     const label = m.split('-')[1] + '月';
     return '<div class="chart-bar-group"><div class="chart-bar" style="height:'+barH+'px;background:'+activeColor+'" title="'+fmt(values[i])+'"></div><div class="chart-bar-label">'+label+'</div></div>';
-  }).join('') : '<div class="empty-state">楠梓A館目前沒有可顯示資料</div>';
+  }).join('') : '<div class="empty-state">目前沒有可顯示資料</div>';
 
   // 館別分配
-  $('buildingRevenueList').innerHTML='<div class="building-row"><span class="building-name">楠梓A館</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+(totalRev ? 100 : 0)+'%;background:var(--primary-500)">'+(totalRev ? 100 : 0)+'%</div></div><span class="building-stats">'+fmt(totalRev)+'</span></div>';
+  const buildingTotals={};
+  currentInvoices.forEach(i=>{const building=i.property_name || extractBuilding(i.room_id);buildingTotals[building]=(buildingTotals[building]||0)+invoiceTotal(i);});
+  const maxBuilding=Math.max(...Object.values(buildingTotals),1);
+  $('buildingRevenueList').innerHTML=Object.keys(buildingTotals).sort().map(building=>'<div class="building-row"><span class="building-name">'+escapeHtml(building)+'</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+Math.round(buildingTotals[building]/maxBuilding*100)+'%;background:var(--primary-500)"></div></div><span class="building-stats">'+fmt(buildingTotals[building])+'</span></div>').join('') || '<div class="empty-state">本月尚無帳單</div>';
 
   // 統計清單
-  const roomRecords=getRoomRecords().filter(isNanziARecord);
-  const active=tenantsData.filter(t=>t.status==='active' && isNanziARecord(t));
+  const roomRecords=getRoomRecords();
+  const active=tenantsData.filter(t=>t.status==='active');
   const vacant=roomRecords.filter(t=>t.status!=='active');
   const bound=active.filter(t=>t.line_user_id);
   const avgRent=active.length ? Math.round(totalRent/active.length) : 0;
@@ -1617,26 +1629,25 @@ function renderReports(){
     ['總房間數',roomRecords.length+'間'],['已出租',active.length+'間'],['空房/整理中',vacant.length+'間'],
     ['入住率',(roomRecords.length ? Math.round(active.length/roomRecords.length*100) : 0)+'%'],
     ['LINE 綁定率',(active.length ? Math.round(bound.length/active.length*100) : 0)+'%'],
-    ['平均租金',fmt(avgRent)],['本月總電費',fmt(totalElec)],['本月總水費',fmt(totalWater)],
+    ['平均租金',fmt(avgRent)],['本月水電合計',fmt(totalUtility)],['已驗證帳單',currentInvoices.length+' 張'],
   ].map(([l,v])=>'<div class="stat-row"><span class="stat-label">'+l+'</span><span class="stat-value">'+v+'</span></div>').join('');
 }
 
 function downloadReportCSV(){
-  const yyyymm = getNanziAReportMonth($('monthSelector').value);
-  const currentInvoices = nanziAInvoices().filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
+  const yyyymm = $('monthSelector').value;
+  const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
   const rows = [
-    ['月份','房號','姓名','租金','電費','水費','滯納金','總計','截止日','繳費狀態'],
+    ['發送月份','使用月份','館別','房號','姓名','租金','水電合計','總計','資料狀態'],
     ...currentInvoices.map(i=>[
       yyyymm,
+      i.usage_month || '',
+      i.property_name || '',
       i.room_id,
       invoiceName(i),
       invoiceRent(i),
-      invoiceElectricity(i),
-      invoiceWater(i),
-      invoiceLateFee(i),
+      invoiceHasCombinedUtility(i) ? invoiceUtilityTotal(i) : invoiceElectricity(i)+invoiceWater(i),
       invoiceTotal(i),
-      i.due_date || '',
-      isPaid(i) ? '已繳' : '未繳'
+      '已驗證預覽'
     ])
   ];
   const csv = rows.map(row=>row.map(cell=>'"'+String(cell ?? '').replace(/"/g,'""')+'"').join(',')).join('\r\n');
@@ -1888,12 +1899,18 @@ function renderDataQualityBanner(){
   const counts=quality.counts || {};
   banner.hidden=false;
   banner.classList.toggle('ready',isReady);
-  $('dataQualityTitle').textContent=isReady ? '正式資料已通過檢查' : '資料同步阻擋';
+  const isMonthlyPreview=quality.dashboard_mode==='monthly_preview';
+  $('dataQualityTitle').textContent=isReady
+    ? (isMonthlyPreview ? '月帳預覽資料可用' : '正式資料已通過檢查')
+    : '資料同步阻擋';
   $('dataQualityMessage').textContent=isReady
-    ? '房客、水電、帳單與候選名單來自同一次同步。'
+    ? (quality.message || (isMonthlyPreview
+      ? '目前顯示已驗證的月帳預覽；正式發送仍由帳單系統獨立控管。'
+      : '房客、水電、帳單與候選名單來自同一次同步。'))
     : (errors[0] || '正式資料尚未通過完整性檢查，發送功能已停止。');
   $('dataQualityMeta').textContent=[
     quality.source_month ? '月份 '+quality.source_month : '',
+    quality.usage_month ? '使用月份 '+quality.usage_month : '',
     quality.sync_run_id ? 'run '+quality.sync_run_id : '',
     '房客 '+Number(counts.tenants||0),
     '水電 '+Number(counts.meters||0),
@@ -1915,8 +1932,11 @@ function showSheetStatus(connected, type='', quality=dataQualityState){
     status.textContent='🔴 已連線／資料阻擋';
     status.title='後端可連線，但正式資料尚未通過完整性檢查。';
   }else{
-    status.textContent='🟢 正式資料可用';
-    status.title='後端連線及資料完整性檢查均已通過。';
+    const isMonthlyPreview=quality?.dashboard_mode==='monthly_preview';
+    status.textContent=isMonthlyPreview ? '🟢 月帳預覽可用' : '🟢 正式資料可用';
+    status.title=isMonthlyPreview
+      ? '主畫面顯示已驗證的月帳預覽；此狀態不會解除正式發送防護。'
+      : '後端連線及資料完整性檢查均已通過。';
   }
   renderDataQualityBanner();
 }
