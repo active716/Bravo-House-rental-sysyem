@@ -13,9 +13,12 @@ const LOCAL_STATE_KEY = 'rental_demo_state_v2';
 const REPAIR_SYNC_QUEUE_KEY = 'repair_sync_queue_v1';
 const ADMIN_TASK_PAGE_URL = 'https://active716.github.io/Bravo-House-rental-sysyem/';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const GAS_READ_TIMEOUT_MS = 45000;
+const GAS_READ_RETRY_DELAY_MS = 1500;
 let repairSyncInFlight = false;
+let dashboardDataLoadPromise = null;
 
-function fetchGasJSONP(action='getAll', params={}){
+function fetchGasJSONP(action='getAll', params={}, options={}){
   if(!HAS_GAS_WEB_APP) return Promise.resolve({ ok:false, local:true });
   return new Promise((resolve, reject)=>{
     const callbackName = 'gas_repair_cb_' + Date.now() + '_' + Math.floor(Math.random()*10000);
@@ -28,8 +31,8 @@ function fetchGasJSONP(action='getAll', params={}){
     };
     const timer = setTimeout(()=>{
       cleanup();
-      reject(new Error('雲端維修資料讀取逾時'));
-    }, 12000);
+      reject(new Error('雲端資料載入超過 45 秒，請按「重新讀取資料」再試一次'));
+    }, Number(options.timeoutMs) || GAS_READ_TIMEOUT_MS);
     window[callbackName] = data => {
       cleanup();
       resolve(data || {});
@@ -1108,23 +1111,40 @@ function applyCloudDashboardData(data={}){
 
 async function loadCloudDashboardData(options={}){
   if(!HAS_GAS_WEB_APP) return false;
+  if(dashboardDataLoadPromise) return dashboardDataLoadPromise;
+
+  dashboardDataLoadPromise=(async()=>{
+    try{
+      if(!options.silent) showLoading();
+      let data;
+      try{
+        data=await fetchGasJSONP('getAll');
+      } catch(firstError) {
+        console.warn('首次雲端資料讀取失敗，準備重試:', firstError);
+        await sleep(GAS_READ_RETRY_DELAY_MS);
+        data=await fetchGasJSONP('getAll');
+      }
+      if(data?.dashboard_error) throw new Error(data.dashboard_error);
+      applyCloudDashboardData(data || {});
+      showSheetStatus(true, 'GAS', dataQualityState);
+      renderAllDataViews();
+      return true;
+    } catch(err) {
+      console.warn('loadCloudDashboardData failed:', err);
+      clearProductionDashboardData(err);
+      showSheetStatus(false, 'GAS', dataQualityState);
+      renderAllDataViews();
+      if(!options.silent) showToast('雲端資料仍無法讀取，請稍後再按一次「重新讀取資料」','error');
+      return false;
+    } finally {
+      if(!options.silent) hideLoading();
+    }
+  })();
+
   try{
-    if(!options.silent) showLoading();
-    const data=await fetchGasJSONP('getAll');
-    if(data?.dashboard_error) throw new Error(data.dashboard_error);
-    applyCloudDashboardData(data || {});
-    showSheetStatus(true, 'GAS', dataQualityState);
-    renderAllDataViews();
-    return true;
-  } catch(err) {
-    console.warn('loadCloudDashboardData failed:', err);
-    clearProductionDashboardData(err);
-    showSheetStatus(false, 'GAS', dataQualityState);
-    renderAllDataViews();
-    if(!options.silent) showToast('雲端資料載入失敗，正式資料已停止顯示。','error');
-    return false;
+    return await dashboardDataLoadPromise;
   } finally {
-    if(!options.silent) hideLoading();
+    dashboardDataLoadPromise=null;
   }
 }
 
@@ -1738,7 +1758,7 @@ $('monthSelector').addEventListener('change', () => {
 });
 
 // ── 同步按鈕 ──────────────────────────────────────────
-$('syncBtn').addEventListener('click',function(){
+$('syncBtn').addEventListener('click',async function(){
   const btn=this;btn.disabled=true;btn.innerHTML='<span>⏳</span> 同步中...';btn.style.opacity='.7';
   
   if (IS_GAS) {
@@ -1762,14 +1782,17 @@ $('syncBtn').addEventListener('click',function(){
         }, 3000);
       })
       .syncFromSource();
+  } else if(HAS_GAS_WEB_APP) {
+    const loaded=await loadCloudDashboardData({silent:false});
+    btn.disabled=false;
+    btn.style.opacity='1';
+    btn.innerHTML=loaded ? '<span>✅</span> 已讀取最新資料' : '<span>↻</span> 重新讀取資料';
+    if(loaded) setTimeout(()=>{btn.innerHTML='<span>↻</span> 重新讀取資料'},2000);
   } else {
-    // 本機預覽測試
-    setTimeout(()=>{
-      btn.disabled=false;
-      btn.innerHTML='<span>✅</span> 同步完成！';
-      btn.style.opacity='1';
-      setTimeout(()=>{btn.innerHTML='<span>🔄</span> 同步資料'},2000);
-    },1500);
+    btn.disabled=false;
+    btn.innerHTML='<span>✅</span> 已重新整理';
+    btn.style.opacity='1';
+    setTimeout(()=>{btn.innerHTML='<span>↻</span> 重新讀取資料'},2000);
   }
 });
 
@@ -2027,7 +2050,6 @@ function init(){
   initCRUD();
   if(HAS_GAS_WEB_APP) {
     scheduleRepairSyncQueue([1200, 6000, 20000]);
-    scheduleAdminTaskCloudRefresh([1800, 8000, 22000]);
   }
 }
 
