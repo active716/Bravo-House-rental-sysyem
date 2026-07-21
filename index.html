@@ -10,7 +10,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=626">
+  <link rel="stylesheet" href="style.css?v=627">
 </head>
 
 <body>
@@ -34,7 +34,15 @@
 
   <script>
     // ★ 請將密碼改成你們的實際密碼 ★
-    const ADMIN_PASSWORD = '073524371';
+    const ADMIN_PASSWORD_SHA256 = '200885116b865276435c24d2861d1fa4b1b2e421b9882b41121847a84d1e3cea';
+
+    async function sha256Hex(value) {
+      const bytes = new TextEncoder().encode(value);
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      return Array.from(new Uint8Array(digest), function (byte) {
+        return byte.toString(16).padStart(2, '0');
+      }).join('');
+    }
 
     function checkAuth() {
       if (sessionStorage.getItem('rental_auth') === '1') {
@@ -48,8 +56,9 @@
       checkAuth();
       var btn = document.getElementById('pwSubmit');
       var inp = document.getElementById('pwInput');
-      function tryLogin() {
-        if (inp.value === ADMIN_PASSWORD) {
+      async function tryLogin() {
+        const submittedHash = await sha256Hex(inp.value);
+        if (submittedHash === ADMIN_PASSWORD_SHA256) {
           sessionStorage.setItem('rental_auth', '1');
           document.getElementById('lockScreen').style.display = 'none';
           document.getElementById('mainApp').style.display = '';
@@ -167,6 +176,15 @@
           </button>
         </div>
       </header>
+
+      <section class="data-quality-banner" id="dataQualityBanner" role="status" aria-live="polite" hidden>
+        <div class="data-quality-mark" aria-hidden="true">!</div>
+        <div class="data-quality-copy">
+          <strong id="dataQualityTitle">資料同步阻擋</strong>
+          <span id="dataQualityMessage">正式資料尚未通過完整性檢查。</span>
+          <small id="dataQualityMeta"></small>
+        </div>
+      </section>
 
       <!-- ===== 頁面：儀表板 ===== -->
       <section class="page active" id="page-dashboard">
@@ -803,7 +821,7 @@
   </div><!-- /mainApp -->
 
   <script src="data.js"></script>
-  <script src="app.js?v=625"></script>
+  <script src="app.js?v=628"></script>
 
   <!-- ===== Modal：新增房客 ===== -->
   <div class="modal-overlay" id="modalTenant" style="display:none">

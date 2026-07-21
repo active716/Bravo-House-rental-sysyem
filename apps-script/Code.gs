@@ -5,7 +5,7 @@ const ADMIN_TASKS_SHEET_NAME = 'admin_tasks';
 const STAFF_CONTACTS_SHEET_NAME = 'staff_contacts';
 const ADMIN_TASK_LOGS_SHEET_NAME = 'logs';
 const ADMIN_TASK_PAGE_URL = 'https://active716.github.io/Bravo-House-rental-sysyem/';
-const GAS_VERSION = '2026-07-02-nanzi-a-contracts-reports-v1';
+const GAS_VERSION = '2026-07-21-source-pipeline-v1';
 const COMPLETED_REPAIR_RETENTION_DAYS = 7;
 const NANZI_A_BUILDING = '楠梓A館';
 const DASHBOARD_SHEETS = {
@@ -16,7 +16,9 @@ const DASHBOARD_SHEETS = {
   available: 'available',
   logs: 'logs',
   config: 'config',
-  srcTenant: 'src_tenant'
+  srcTenant: 'src_tenant',
+  syncHealth: 'sync_health',
+  sendControl: 'send_control'
 };
 const REPAIR_HEADERS = [
   'id',
@@ -102,9 +104,11 @@ function doGet(e) {
   }
 
   if (action === 'health') {
+    const dataQuality = readDashboardDataQuality_();
     return output_({
       ok: true,
       version: GAS_VERSION,
+      data_quality: dataQuality,
       supports_get_upsert: true,
       supports_form_post: true,
       supports_admin_tasks: true,
@@ -215,30 +219,36 @@ function output_(data, callback) {
 function readDashboardData_() {
   try {
     const ss = SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
-    const contracts = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.srcTenant)
+    const dataQuality = readDashboardDataQuality_(ss);
+    const useCanonicalData = dataQuality.status === 'ready';
+    const contracts = useCanonicalData ? readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.srcTenant)
       .map(normalizeContractForDashboard_)
-      .filter(isNanziADashboardRecord_);
+      .filter(isValidDashboardRecord_) : [];
     const contractsByRoom = mapDashboardRowsByRoom_(contracts);
-    const tenants = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.tenants)
-      .map(normalizeTenantForDashboard_);
+    const tenants = useCanonicalData ? readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.tenants)
+      .map(normalizeTenantForDashboard_)
+      .filter(isValidDashboardRecord_) : [];
     tenants.forEach(tenant => {
-      if (!isNanziADashboardRecord_(tenant)) return;
       const contract = contractsByRoom[tenant.room_id];
       if (!contract) return;
       if (!tenant.contract_start) tenant.contract_start = contract.contract_start;
       if (!tenant.contract_end) tenant.contract_end = contract.contract_end;
       if (!tenant.property_name) tenant.property_name = contract.property_name;
     });
-    const invoices = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.invoices)
-      .map(normalizeInvoiceForDashboard_);
-    const meter = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.meter)
-      .map(normalizeMeterForDashboard_);
+    const invoices = useCanonicalData ? readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.invoices)
+      .map(normalizeInvoiceForDashboard_)
+      .filter(isValidDashboardRecord_) : [];
+    const meter = useCanonicalData ? readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.meter)
+      .map(normalizeMeterForDashboard_)
+      .filter(isValidDashboardRecord_) : [];
     const available = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.available)
       .map(normalizeAvailableForDashboard_);
     let rooms = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.rooms)
       .map(normalizeRoomForDashboard_);
     const logs = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.logs)
-      .map(normalizeLogForDashboard_);
+      .slice(-30)
+      .map(normalizeLogForDashboard_)
+      .reverse();
     const config = readConfigForDashboard_(ss);
 
     if (!rooms.length) {
@@ -254,9 +264,10 @@ function readDashboardData_() {
       meters: meter,
       available,
       contracts,
-      reporting_months: buildNanziAReportingMonths_(invoices),
+      reporting_months: buildDashboardReportingMonths_(invoices),
       logs,
-      config
+      config,
+      data_quality: dataQuality
     };
   } catch (err) {
     return {
@@ -271,6 +282,12 @@ function readDashboardData_() {
       reporting_months: { default_month: '', months: [] },
       logs: [],
       config: {},
+      data_quality: {
+        status: 'blocked',
+        ready: false,
+        errors: [err && err.message ? err.message : String(err)],
+        version: GAS_VERSION
+      },
       dashboard_error: err && err.message ? err.message : String(err)
     };
   }
@@ -1054,4 +1071,127 @@ function installAdminTaskReminderTrigger() {
     .everyDays(1)
     .atHour(8)
     .create();
+}
+
+// Dashboard normalization overrides for the direct-source billing pipeline.
+// They are intentionally declared last so this file remains compatible with
+// older deployments that contain legacy mojibake aliases above.
+function normalizeTenantForDashboard_(row) {
+  const roomId = firstValue_(row, ['room_id', '\u623f\u865f', 'room']);
+  const name = firstValue_(row, ['name', 'tenant_name', '\u59d3\u540d']);
+  return {
+    ...row,
+    tenant_id: firstValue_(row, ['tenant_id', 'id']) || ('T-' + roomId),
+    room_id: roomId,
+    property_name: firstValue_(row, ['property_name', 'building', '\u9928\u5225']) || extractDashboardBuilding_(roomId),
+    name,
+    phone: firstValue_(row, ['phone', '\u96fb\u8a71', 'contact_phone']),
+    rent: numberText_(firstValue_(row, ['rent', 'rent_amount', '\u623f\u79df(/\u6708)'])),
+    people: numberText_(firstValue_(row, ['people', '\u4eba\u6578'])) || 1,
+    status: firstValue_(row, ['status', '\u72c0\u614b']) || 'active',
+    line_user_id: firstValue_(row, ['line_user_id', 'LINE_ID']),
+    contract_start: firstValue_(row, ['contract_start', '\u7c3d\u7d04\u65e5\u671f']),
+    contract_end: firstValue_(row, ['contract_end', '\u5230\u671f\u65e5\u671f']),
+    validation_status: firstValue_(row, ['validation_status']) || 'ready'
+  };
+}
+
+function normalizeContractForDashboard_(row) {
+  const roomId = firstValue_(row, ['room_id', '\u623f\u865f', 'room']);
+  return {
+    ...row,
+    contract_id: firstValue_(row, ['contract_id', 'id']) || ('CONTRACT-' + roomId),
+    room_id: roomId,
+    property_name: firstValue_(row, ['property_name', 'building', '\u9928\u5225']) || extractDashboardBuilding_(roomId),
+    name: firstValue_(row, ['name', 'tenant_name', '\u59d3\u540d']),
+    phone: firstValue_(row, ['phone', '\u96fb\u8a71', 'contact_phone']),
+    rent: numberText_(firstValue_(row, ['rent', 'rent_amount', '\u623f\u79df(/\u6708)'])),
+    status: firstValue_(row, ['status', '\u72c0\u614b']) || 'active',
+    contract_start: firstValue_(row, ['contract_start', '\u7c3d\u7d04\u65e5\u671f']),
+    contract_end: firstValue_(row, ['contract_end', '\u5230\u671f\u65e5\u671f']),
+    validation_status: firstValue_(row, ['validation_status']) || 'ready'
+  };
+}
+
+function readDashboardDataQuality_(spreadsheet) {
+  try {
+    const ss = spreadsheet || SpreadsheetApp.openById(DASHBOARD_SPREADSHEET_ID);
+    const healthRows = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.syncHealth);
+    const controlRows = readOptionalSheetObjects_(ss, DASHBOARD_SHEETS.sendControl);
+    const health = {};
+    healthRows.concat(controlRows).forEach(row => {
+      const key = firstValue_(row, ['key']);
+      if (key) health[key] = firstValue_(row, ['value']);
+    });
+    const status = health.source_pipeline_status || 'blocked';
+    const errors = String(health.validation_errors || '')
+      .split(/\s*\|\s*/)
+      .map(item => item.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+    return {
+      status,
+      ready: status === 'ready' && !errors.length,
+      source_month: health.source_month || '',
+      sync_run_id: health.sync_run_id || '',
+      candidates_sync_run_id: health.candidates_sync_run_id || '',
+      counts: {
+        tenants: Number(health.source_tenant_count || 0),
+        meters: Number(health.source_meter_count || 0),
+        invoices: Number(health.source_invoice_count || 0)
+      },
+      errors,
+      last_successful_sync_at: health.last_successful_sync_at || '',
+      version: GAS_VERSION
+    };
+  } catch (error) {
+    return {
+      status: 'blocked',
+      ready: false,
+      source_month: '',
+      sync_run_id: '',
+      counts: { tenants: 0, meters: 0, invoices: 0 },
+      errors: [error && error.message ? error.message : String(error)],
+      last_successful_sync_at: '',
+      version: GAS_VERSION
+    };
+  }
+}
+
+function isValidDashboardRecord_(row) {
+  if (!row) return false;
+  const roomId = String(row.room_id || row['\u623f\u865f'] || '').trim();
+  if (!roomId || /^#(?:REF!|N\/A|VALUE!|NUM!|DIV\/0!|ERROR!)$/i.test(roomId)) return false;
+  const status = String(row.validation_status || 'ready').trim();
+  return !status || status === 'ready';
+}
+
+function buildDashboardReportingMonths_(invoices) {
+  const counts = {};
+  (invoices || []).forEach(invoice => {
+    const month = normalizeDashboardMonth_(invoice.yyyymm || invoice.billing_month);
+    if (month) counts[month] = (counts[month] || 0) + 1;
+  });
+  const months = Object.keys(counts).sort().map(month => ({ month, count: counts[month] }));
+  return {
+    default_month: months.length ? months[months.length - 1].month : '',
+    months
+  };
+}
+
+function normalizeLogForDashboard_(row) {
+  const type = firstValue_(row, ['type', 'event', 'action']) || 'system';
+  let text = firstValue_(row, ['summary', 'text', 'message']) || type;
+  if (type === 'billingAccountBind') text = '\u5e33\u55ae\u5c0d\u8c61\u7d81\u5b9a\u5df2\u66f4\u65b0';
+  if (type === 'officialSend') text = '\u6b63\u5f0f\u5e33\u55ae\u767c\u9001\u4f5c\u696d\u5b8c\u6210';
+  text = String(text)
+    .replace(/U[0-9a-f]{32}/gi, '[LINE ID hidden]')
+    .replace(/09\d{2}[-\s]?\d{3}[-\s]?\d{3}/g, '[phone hidden]')
+    .slice(0, 180);
+  return {
+    color: /error|blocked/i.test(type + ' ' + text) ? 'red' : /ready|done|complete/i.test(type + ' ' + text) ? 'green' : 'blue',
+    text,
+    time: firstValue_(row, ['time', 'timestamp', 'created_at']) || '',
+    type
+  };
 }

@@ -412,6 +412,8 @@ const invoiceName=i=>i.name||i.tenant_name||'';
 const invoiceRent=i=>Number(i.rent ?? i.rent_amount ?? 0) || 0;
 const invoiceElectricity=i=>Number(i.electricity ?? i.electric_fee ?? 0) || 0;
 const invoiceWater=i=>Number(i.water ?? i.water_fee ?? 0) || 0;
+const invoiceUtilityTotal=i=>Number(i.utility_total ?? 0) || 0;
+const invoiceHasCombinedUtility=i=>String(i.utility_split_status||'')==='combined_source_total';
 const invoiceLateFee=i=>Number(i.late_fee ?? i.other_fee ?? 0) || 0;
 const invoiceTotal=i=>Number(i.total ?? i.total_amount ?? 0) || 0;
 const rowValue=(row,keys)=>{
@@ -448,6 +450,8 @@ function buildBillingGroups(invoices){
         rent: 0,
         electricity: 0,
         water: 0,
+        utilityTotal: 0,
+        hasCombinedUtility: false,
         lateFee: 0,
         total: 0,
         sent: false,
@@ -461,14 +465,18 @@ function buildBillingGroups(invoices){
       rent: invoiceRent(invoice),
       electricity: invoiceElectricity(invoice),
       water: invoiceWater(invoice),
+      utilityTotal: invoiceUtilityTotal(invoice),
+      hasCombinedUtility: invoiceHasCombinedUtility(invoice),
       lateFee: invoiceLateFee(invoice),
       total: invoiceTotal(invoice),
       paid: isPaid(invoice)
     };
     group.rooms.push(room);
     group.rent += room.rent;
-    group.electricity += room.electricity;
+    group.electricity += room.hasCombinedUtility ? room.utilityTotal : room.electricity;
     group.water += room.water;
+    group.utilityTotal += room.utilityTotal;
+    group.hasCombinedUtility = group.hasCombinedUtility || room.hasCombinedUtility;
     group.lateFee += room.lateFee;
     group.total += room.total;
     group.sent = group.sent || invoiceSent(invoice, tenant);
@@ -495,7 +503,7 @@ function isNanziARecord(row){
 }
 
 function nanziAInvoices(){
-  return invoicesData.filter(isNanziARecord);
+  return invoicesData;
 }
 
 function getNanziAReportMonth(selectedMonth=''){
@@ -528,6 +536,7 @@ let logsData = [];
 let configData = {};
 let roomsData = [];
 let contractsData = [];
+let dataQualityState = {status:'loading',ready:false,errors:[],counts:{tenants:0,meters:0,invoices:0}};
 let crudInitialized = false;
 
 function saveLocalState(){
@@ -1044,6 +1053,7 @@ function applyConfigMonth(config={}){
 }
 
 function renderAllDataViews(){
+  renderDataQualityBanner();
   initFilters();
   populateRepairRoomOptions();
   populateStaffOptions();
@@ -1068,6 +1078,9 @@ function applyCloudDashboardData(data={}){
   const available=firstArrayField(data, ['available', 'availableData']);
   const logs=firstArrayField(data, ['logs', 'logsData']);
   const contracts=firstArrayField(data, ['contracts', 'contractsData']);
+  dataQualityState = data.data_quality && typeof data.data_quality === 'object'
+    ? data.data_quality
+    : {status:'blocked',ready:false,errors:['後端未回傳資料品質狀態'],counts:{tenants:0,meters:0,invoices:0}};
 
   if(tenants) tenantsData=tenants;
   if(invoices) invoicesData=invoices;
@@ -1100,12 +1113,15 @@ async function loadCloudDashboardData(options={}){
     const data=await fetchGasJSONP('getAll');
     if(data?.dashboard_error) throw new Error(data.dashboard_error);
     applyCloudDashboardData(data || {});
-    showSheetStatus(true, 'GAS');
+    showSheetStatus(true, 'GAS', dataQualityState);
     renderAllDataViews();
     return true;
   } catch(err) {
     console.warn('loadCloudDashboardData failed:', err);
-    if(!options.silent) showToast('Cloud data load failed. Using local data.','error');
+    clearProductionDashboardData(err);
+    showSheetStatus(false, 'GAS', dataQualityState);
+    renderAllDataViews();
+    if(!options.silent) showToast('雲端資料載入失敗，正式資料已停止顯示。','error');
     return false;
   } finally {
     if(!options.silent) hideLoading();
@@ -1258,7 +1274,8 @@ function initFilters(){
   });
   
   // 若無資料則使用預設館別
-  const buildings = uniqueBuildings.size > 0 ? Array.from(uniqueBuildings) : BUILDINGS.map(b => b.name);
+  const pipelineReady = dataQualityState?.status === 'ready' && dataQualityState?.ready !== false;
+  const buildings = uniqueBuildings.size > 0 ? Array.from(uniqueBuildings) : (pipelineReady ? BUILDINGS.map(b => b.name) : []);
   
   ['roomBuildingFilter','tenantBuildingFilter'].forEach(id=>{
     const select = $(id);
@@ -1272,6 +1289,7 @@ function initFilters(){
 
 // === 1. 儀表板 (DASHBOARD) ===
 function renderDashboard(){
+  const pipelineReady = dataQualityState?.status === 'ready' && dataQualityState?.ready !== false;
   const roomRecords=getRoomRecords();
   const active=roomRecords.filter(t=>t.status==='active');
   const vacant=roomRecords.filter(t=>t.status!=='active');
@@ -1310,16 +1328,16 @@ function renderDashboard(){
     const rooms=roomRecords.filter(r=>(r.property_name||r.room_id).includes(b.name.replace('館','')));
     return rooms.length || b.total;
   }), 1);
-  $('buildingList').innerHTML=BUILDINGS.map(b=>{
+  $('buildingList').innerHTML=pipelineReady ? BUILDINGS.map(b=>{
     const rooms=roomRecords.filter(r=>(r.property_name||r.room_id).includes(b.name.replace('館','')));
     const total=rooms.length || b.total;
     const occ=rooms.filter(r=>r.status==='active').length;
     const pct=Math.round(occ/total*100) || 0;
     return '<div class="building-row"><span class="building-name">'+b.name+'</span><div class="building-bar-bg"><div class="building-bar-fill" style="width:'+Math.round(total/maxT*100)+'%;background:'+b.color+'">'+pct+'%</div></div><span class="building-stats">'+occ+'/'+total+'</span></div>';
-  }).join('');
+  }).join('') : '<div class="empty-state">資料尚未通過驗證，暫不顯示館別統計</div>';
 
   // 系統動態
-  $('activityList').innerHTML=logsData.length ? logsData.map(a=>'<div class="activity-item"><div class="activity-dot '+a.color+'"></div><div><div class="activity-text">'+a.text+'</div><span class="activity-time">'+a.time+'</span></div></div>').join('') : '<div class="empty-state">尚無系統紀錄</div>';
+  $('activityList').innerHTML=logsData.length ? logsData.map(a=>'<div class="activity-item"><div class="activity-dot '+escapeHtml(a.color||'blue')+'"></div><div><div class="activity-text">'+escapeHtml(a.text||'系統作業')+'</div><span class="activity-time">'+escapeHtml(a.time||'')+'</span></div></div>').join('') : '<div class="empty-state">尚無系統紀錄</div>';
 
   // 快速看版
   $('unpaidDashCount').textContent=unpaid.length;
@@ -1392,7 +1410,21 @@ function billingRoomDetailsHtml(group){
   }).join('') + '</div>';
 }
 
+function billingRoomDetailsHtml(group){
+  return '<div class="billing-detail-grid">' + group.rooms.map(room=>{
+    const rentLine=room.rent ? '<span>房租 '+fmt(room.rent)+'</span>' : '';
+    const utilityLine=room.hasCombinedUtility
+      ? '<span>水電合計 '+fmt(room.utilityTotal)+'（來源未拆分）</span>'
+      : '<span>電費 '+fmt(room.electricity)+'</span><span>水費 '+fmt(room.water)+'</span>';
+    const lateLine=room.lateFee ? '<span>其他費用 '+fmt(room.lateFee)+'</span>' : '';
+    return '<div class="billing-detail-chip"><strong>'+escapeHtml(room.room_id)+'</strong>'+rentLine+utilityLine+lateLine+'</div>';
+  }).join('') + '</div>';
+}
+
 function renderBilling(){
+  const billingTable=$('billingTbody')?.closest('table');
+  const billingHeaders=billingTable ? billingTable.querySelectorAll('th') : [];
+  if(billingHeaders[4]) billingHeaders[4].textContent='電費／水電合計';
   const yyyymm = $('monthSelector').value;
   const currentInvoices = invoicesData.filter(i => normalizeYyyymm(i.yyyymm) === yyyymm);
   const groupedInvoices = buildBillingGroups(currentInvoices);
@@ -1490,7 +1522,7 @@ $('repairStatusFilter').addEventListener('change',()=>renderRepairs($('repairSta
 
 // === 7. 合約管理 (CONTRACTS) ===
 function renderContracts(){
-  const sourceRows=(contractsData.length ? contractsData : tenantsData).filter(isNanziARecord);
+  const sourceRows=(contractsData.length ? contractsData : tenantsData);
   const active=sourceRows.filter(t=>(!t.status || t.status==='active')&&t.contract_end);
   const sorted=[...active].sort((a,b)=>diffDays(a.contract_end)-diffDays(b.contract_end));
   const expiring=sorted.filter(t=>diffDays(t.contract_end)>0&&diffDays(t.contract_end)<=30);
@@ -1804,6 +1836,68 @@ function showSheetStatus(connected, type = '') {
 }
 
 // ── 資料整合載入 ──────────────────────────────────────
+function clearProductionDashboardData(error){
+  tenantsData=[];
+  invoicesData=[];
+  meterData=[];
+  roomsData=[];
+  availableData=[];
+  logsData=[];
+  contractsData=[];
+  reportingMonthsData=null;
+  dataQualityState={
+    status:'blocked',
+    ready:false,
+    source_month:'',
+    sync_run_id:'',
+    errors:[String(error?.message || error || '雲端資料無法讀取')],
+    counts:{tenants:0,meters:0,invoices:0}
+  };
+  applyConfigMonth({yyyymm:normalizeYyyymm(new Date())});
+}
+
+function renderDataQualityBanner(){
+  const banner=$('dataQualityBanner');
+  if(!banner) return;
+  const quality=dataQualityState || {};
+  const isReady=quality.status==='ready' && quality.ready!==false;
+  const errors=Array.isArray(quality.errors) ? quality.errors.filter(Boolean) : [];
+  const counts=quality.counts || {};
+  banner.hidden=false;
+  banner.classList.toggle('ready',isReady);
+  $('dataQualityTitle').textContent=isReady ? '正式資料已通過檢查' : '資料同步阻擋';
+  $('dataQualityMessage').textContent=isReady
+    ? '房客、水電、帳單與候選名單來自同一次同步。'
+    : (errors[0] || '正式資料尚未通過完整性檢查，發送功能已停止。');
+  $('dataQualityMeta').textContent=[
+    quality.source_month ? '月份 '+quality.source_month : '',
+    quality.sync_run_id ? 'run '+quality.sync_run_id : '',
+    '房客 '+Number(counts.tenants||0),
+    '水電 '+Number(counts.meters||0),
+    '帳單 '+Number(counts.invoices||0)
+  ].filter(Boolean).join(' · ');
+  const mark=banner.querySelector('.data-quality-mark');
+  if(mark) mark.textContent=isReady ? '✓' : '!';
+}
+
+function showSheetStatus(connected, type='', quality=dataQualityState){
+  const status=$('connStatus');
+  if(!status) return;
+  const isReady=connected && quality?.status==='ready' && quality?.ready!==false;
+  status.className='conn-status'+(isReady?' connected':'');
+  if(!connected){
+    status.textContent='🔴 雲端連線失敗';
+    status.title='正式資料未載入，不使用本機模擬資料替代。';
+  }else if(!isReady){
+    status.textContent='🔴 已連線／資料阻擋';
+    status.title='後端可連線，但正式資料尚未通過完整性檢查。';
+  }else{
+    status.textContent='🟢 正式資料可用';
+    status.title='後端連線及資料完整性檢查均已通過。';
+  }
+  renderDataQualityBanner();
+}
+
 function loadData() {
   if (IS_GAS) {
     google.script.run
@@ -1821,8 +1915,9 @@ function loadData() {
           contractsData = data.contracts || data.contractsData || [];
           reportingMonthsData = data.reporting_months || data.reportingMonths || null;
           configData = data.config || {};
+          dataQualityState = data.data_quality || {status:'blocked',ready:false,errors:['後端未回傳資料品質狀態'],counts:{}};
           
-          showSheetStatus(true, 'GAS');
+          showSheetStatus(true, 'GAS', dataQualityState);
 
           // 自動同步 config 的 yyyymm 至下拉選單
           if(configData.yyyymm) {
@@ -1849,22 +1944,33 @@ function loadData() {
       .withFailureHandler(function(err) {
         alert('載入 Google Sheets 資料失敗: ' + err.message);
       })
+      .withFailureHandler(function(err) {
+        clearProductionDashboardData(err);
+        showSheetStatus(false, 'GAS', dataQualityState);
+        init();
+      })
       .getDashboardData();
   } else {
     // 本機模式：先立即用 Mock 資料啟動，確保頁面可用
     // 若 SPREADSHEET_ID 有設定，再嘗試 JSONP 更新真實資料
-    tenantsData  = MOCK_TENANTS;
-    invoicesData = MOCK_INVOICES;
-    meterData    = MOCK_METER_DATA || [];
-    roomsData    = MOCK_ROOMS || [];
-    availableData= AVAILABLE_ROOMS;
-    logsData     = MOCK_ACTIVITIES;
+    tenantsData  = HAS_GAS_WEB_APP ? [] : MOCK_TENANTS;
+    invoicesData = HAS_GAS_WEB_APP ? [] : MOCK_INVOICES;
+    meterData    = HAS_GAS_WEB_APP ? [] : (MOCK_METER_DATA || []);
+    roomsData    = HAS_GAS_WEB_APP ? [] : (MOCK_ROOMS || []);
+    availableData= HAS_GAS_WEB_APP ? [] : AVAILABLE_ROOMS;
+    logsData     = HAS_GAS_WEB_APP ? [] : MOCK_ACTIVITIES;
     repairsData  = [];
     adminTasksData = [];
     staffContactsData = [];
     loadLocalState();
-    ensureCompanyBillingDemoData();
-    showSheetStatus(false);
+    if(HAS_GAS_WEB_APP){
+      clearProductionDashboardData('正在等待正式雲端資料');
+      availableData=[];
+      logsData=[];
+    }else{
+      ensureCompanyBillingDemoData();
+    }
+    showSheetStatus(false, HAS_GAS_WEB_APP ? 'GAS' : 'DEMO', dataQualityState);
     init();
     if(HAS_GAS_WEB_APP) {
       loadCloudDashboardData({silent:true});
@@ -1903,6 +2009,7 @@ function loadData() {
 
 // ── 啟動 ─────────────────────────────────────────────
 function init(){
+  renderDataQualityBanner();
   initFilters();
   populateRepairRoomOptions();
   populateStaffOptions();

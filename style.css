@@ -584,6 +584,50 @@ body{font-family:var(--font-sans);background:var(--gray-100);color:var(--gray-80
   --font-sans: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+/* Source-of-truth gate: connection health and data readiness are separate. */
+.data-quality-banner{
+  margin:16px 20px 0;
+  padding:14px 16px;
+  display:grid;
+  grid-template-columns:36px minmax(0,1fr);
+  gap:12px;
+  align-items:start;
+  color:#7f1d1d;
+  background:#fff7f7;
+  border:1px solid #fecaca;
+  border-left:5px solid #dc2626;
+  border-radius:10px;
+  box-shadow:0 8px 24px rgba(127,29,29,.08);
+}
+.data-quality-banner[hidden]{display:none}
+.data-quality-banner.ready{
+  color:#14532d;
+  background:#f0fdf4;
+  border-color:#bbf7d0;
+  border-left-color:#16a34a;
+}
+.data-quality-mark{
+  width:32px;
+  height:32px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  color:#fff;
+  background:#dc2626;
+  font-weight:900;
+  font-size:1rem;
+}
+.data-quality-banner.ready .data-quality-mark{background:#16a34a}
+.data-quality-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.data-quality-copy strong{font-size:.9rem;letter-spacing:.02em}
+.data-quality-copy span{font-size:.82rem;line-height:1.5;overflow-wrap:anywhere}
+.data-quality-copy small{font-size:.7rem;opacity:.76;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+
+@media (max-width:720px){
+  .data-quality-banner{margin:10px 12px 0;padding:12px;grid-template-columns:30px minmax(0,1fr)}
+  .data-quality-mark{width:28px;height:28px}
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --neutral-primary-soft: #1a2a26;
